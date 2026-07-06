@@ -63,13 +63,13 @@ export default function CustomersPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="text-left px-4 py-3 font-medium text-slate-500">No</th>
-                <th className="text-left px-4 py-3 font-medium text-slate-500">顧客名</th>
-                <th className="text-left px-4 py-3 font-medium text-slate-500">ランク</th>
-                <th className="text-left px-4 py-3 font-medium text-slate-500">メール</th>
-                <th className="text-left px-4 py-3 font-medium text-slate-500">電話</th>
-                <th className="text-left px-4 py-3 font-medium text-slate-500">ステータス</th>
-                <th className="px-4 py-3"></th>
+                <th className="text-left px-4 py-3 font-medium text-slate-500 whitespace-nowrap w-24">No</th>
+                <th className="text-left px-4 py-3 font-medium text-slate-500 whitespace-nowrap">顧客名</th>
+                <th className="text-left px-4 py-3 font-medium text-slate-500 whitespace-nowrap w-16">ランク</th>
+                <th className="text-left px-4 py-3 font-medium text-slate-500 whitespace-nowrap">メール</th>
+                <th className="text-left px-4 py-3 font-medium text-slate-500 whitespace-nowrap">電話</th>
+                <th className="text-left px-4 py-3 font-medium text-slate-500 whitespace-nowrap w-28">ステータス</th>
+                <th className="px-4 py-3 w-24"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">

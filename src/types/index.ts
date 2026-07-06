@@ -104,3 +104,31 @@ export interface ScrapedProperty {
   thumbnail_url: string | null
   room_number: string | null
 }
+
+export type CrawlMode = 'full' | 'diff' | 'manual' | 'debug'
+
+export type StoppedReason =
+  | 'reached_last_page'
+  | 'reached_page_limit'
+  | 'duplicate_sequence_detected'
+  | 'fetch_error'
+  | 'no_results'
+
+export interface PageCrawlResult {
+  properties: ScrapedProperty[]
+  totalCount: number | null
+  totalPages: number | null
+  checkedPages: number
+  fetchedCount: number
+  newCount: number
+  duplicateCount: number
+  stoppedReason: StoppedReason
+  error?: string
+  htmlPath?: string
+}
+
+export interface CrawlOptions {
+  mode: CrawlMode
+  maxPages?: number          // 明示的に上限指定（modeより優先）
+  stopOnDuplicatePages?: number  // 差分モード: N ページ連続重複で停止（デフォルト2）
+}
