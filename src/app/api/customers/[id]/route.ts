@@ -26,7 +26,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const {
     customer_no, name, email, phone, rank, sales_memo, status,
-    area, property_type, budget_min, budget_max,
+    area, property_type,
+    transaction_type,
+    budget_min, budget_max,
+    rent_min, rent_max,
     area_sqm_min, area_sqm_max, walk_minutes_max, building_age_max, other_conditions,
   } = body
 
@@ -43,7 +46,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   await supabase.from('customer_conditions').upsert(
     {
       customer_id: id,
-      area, property_type, budget_min, budget_max,
+      transaction_type: transaction_type ?? 'sale',
+      area, property_type,
+      budget_min, budget_max,
+      rent_min, rent_max,
       area_sqm_min, area_sqm_max, walk_minutes_max, building_age_max, other_conditions,
     },
     { onConflict: 'customer_id' }

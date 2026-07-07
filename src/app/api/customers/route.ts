@@ -32,7 +32,10 @@ export async function POST(req: NextRequest) {
   const {
     customer_no, name, email, phone, rank, sales_memo, status,
     // condition fields
-    area, property_type, budget_min, budget_max,
+    transaction_type,
+    area, property_type,
+    budget_min, budget_max,
+    rent_min, rent_max,
     area_sqm_min, area_sqm_max, walk_minutes_max, building_age_max, other_conditions,
   } = body
 
@@ -48,7 +51,10 @@ export async function POST(req: NextRequest) {
   // 条件作成
   await supabase.from('customer_conditions').insert({
     customer_id: customer.id,
-    area, property_type, budget_min, budget_max,
+    transaction_type: transaction_type ?? 'sale',
+    area, property_type,
+    budget_min, budget_max,
+    rent_min, rent_max,
     area_sqm_min, area_sqm_max, walk_minutes_max, building_age_max, other_conditions,
   })
 

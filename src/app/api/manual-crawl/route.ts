@@ -102,7 +102,17 @@ function matchCondition(
   return { score: total > 0 ? matched / total : 1, items }
 }
 
+const IS_VERCEL = Boolean(process.env.VERCEL)
+
 export async function POST(req: NextRequest) {
+  if (IS_VERCEL) {
+    return NextResponse.json({
+      error: 'Vercel Serverless環境ではPlaywrightクロールは実行できません。ローカル環境から実行してください。',
+      portalType: 'public' as const,
+      portalName: '',
+    } satisfies Partial<ManualCrawlResult>, { status: 503 })
+  }
+
   const body = await req.json()
   const { portalName, url, customerId, maxPages = 3 } = body as {
     portalName: string
