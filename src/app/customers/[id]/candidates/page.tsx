@@ -15,8 +15,11 @@ interface Candidate {
   site: string
   name: string
   address: string | null
+  transaction_type: 'sale' | 'rent'
   current_price: number | null
   last_price: number | null
+  monthly_rent: number | null
+  management_fee: number | null
   floor_plan: string | null
   area_sqm: number | null
   walk_minutes: number | null
@@ -32,8 +35,11 @@ interface Candidate {
 
 interface Condition {
   area: string | null
+  transaction_type: 'sale' | 'rent' | null
   budget_min: number | null
   budget_max: number | null
+  rent_min: number | null
+  rent_max: number | null
   area_sqm_min: number | null
   area_sqm_max: number | null
   walk_minutes_max: number | null
@@ -67,6 +73,13 @@ type FilterKey = 'all' | 'new' | 'price_changed'
 function formatPrice(price: number | null) {
   if (!price) return '価格未定'
   return `${(price / 10000).toLocaleString()}万円`
+}
+
+function formatRent(rent: number | null, fee: number | null) {
+  if (!rent) return '賃料未定'
+  const base = `${Math.round(rent / 10000)}万円/月`
+  if (fee) return `${base}（管理費 ${fee.toLocaleString()}円）`
+  return base
 }
 
 export default function CandidatesPage() {
@@ -140,10 +153,13 @@ export default function CandidatesPage() {
     return true
   })
 
+  const getEffectivePrice = (c: Candidate) =>
+    c.transaction_type === 'rent' ? (c.monthly_rent ?? 0) : (c.current_price ?? 0)
+
   // ソート
   const visibleCandidates = [...filtered].sort((a, b) => {
-    if (sortKey === 'price_asc') return (a.current_price ?? 0) - (b.current_price ?? 0)
-    if (sortKey === 'price_desc') return (b.current_price ?? 0) - (a.current_price ?? 0)
+    if (sortKey === 'price_asc') return getEffectivePrice(a) - getEffectivePrice(b)
+    if (sortKey === 'price_desc') return getEffectivePrice(b) - getEffectivePrice(a)
     if (sortKey === 'price_change') {
       const aChanged = a.priceChange !== null ? 1 : 0
       const bChanged = b.priceChange !== null ? 1 : 0
@@ -207,9 +223,15 @@ export default function CandidatesPage() {
         {cond && (
           <div className="bg-white rounded-xl border border-slate-200 p-4 mb-5 flex flex-wrap gap-3 text-sm">
             <span className="text-slate-400 text-xs self-center">照合条件：</span>
+            {cond.transaction_type && (
+              <Chip label={cond.transaction_type === 'sale' ? '売買' : '賃貸'} color={cond.transaction_type === 'sale' ? 'blue' : 'purple'} />
+            )}
             {cond.area && <Chip label={`エリア: ${cond.area}`} />}
-            {(cond.budget_min || cond.budget_max) && (
+            {cond.transaction_type !== 'rent' && (cond.budget_min || cond.budget_max) && (
               <Chip label={`予算: ${cond.budget_min ? `${cond.budget_min}万` : '下限なし'} 〜 ${cond.budget_max ? `${cond.budget_max}万` : '上限なし'}`} />
+            )}
+            {cond.transaction_type === 'rent' && (cond.rent_min || cond.rent_max) && (
+              <Chip label={`賃料: ${cond.rent_min ? `${Math.round(cond.rent_min / 10000)}万` : '下限なし'} 〜 ${cond.rent_max ? `${Math.round(cond.rent_max / 10000)}万` : '上限なし'}/月`} />
             )}
             {cond.area_sqm_min && <Chip label={`面積: ${cond.area_sqm_min}㎡以上`} />}
             {cond.area_sqm_max && <Chip label={`面積: ${cond.area_sqm_max}㎡以下`} />}
@@ -348,7 +370,9 @@ function PropertyCard({
           {/* 価格（変動バッジ付き） */}
           <div className="flex items-center gap-2">
             <span className="text-base font-bold text-slate-900">
-              {formatPrice(c.current_price)}
+              {c.transaction_type === 'rent'
+                ? formatRent(c.monthly_rent, c.management_fee)
+                : formatPrice(c.current_price)}
             </span>
             {c.priceChange && (
               <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
@@ -361,7 +385,9 @@ function PropertyCard({
             )}
             {c.last_price !== null && c.last_price !== c.current_price && (
               <span className="text-xs text-slate-400 line-through">
-                {formatPrice(c.last_price)}
+                {c.transaction_type === 'rent'
+                  ? formatRent(c.last_price, null)
+                  : formatPrice(c.last_price)}
               </span>
             )}
           </div>
@@ -398,9 +424,14 @@ function PropertyCard({
   )
 }
 
-function Chip({ label }: { label: string }) {
+function Chip({ label, color }: { label: string; color?: string }) {
+  const cls = color === 'blue'
+    ? 'bg-blue-100 text-blue-700'
+    : color === 'purple'
+    ? 'bg-purple-100 text-purple-700'
+    : 'bg-slate-100 text-slate-600'
   return (
-    <span className="bg-slate-100 text-slate-600 text-xs px-2.5 py-1 rounded-full">{label}</span>
+    <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${cls}`}>{label}</span>
   )
 }
 

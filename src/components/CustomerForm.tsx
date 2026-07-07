@@ -32,10 +32,16 @@ export default function CustomerForm({ initial, customerId }: Props) {
     rank: initial?.rank ?? 'C',
     status: initial?.status ?? 'active',
     sales_memo: initial?.sales_memo ?? '',
+    transaction_type: (cond?.transaction_type ?? 'sale') as 'sale' | 'rent',
     area: cond?.area ?? '',
     property_type: cond?.property_type ?? '',
+    // 売買
     budget_min: String(cond?.budget_min ?? ''),
     budget_max: String(cond?.budget_max ?? ''),
+    // 賃貸
+    rent_min: String(cond?.rent_min ?? ''),
+    rent_max: String(cond?.rent_max ?? ''),
+    // 共通
     area_sqm_min: String(cond?.area_sqm_min ?? ''),
     area_sqm_max: String(cond?.area_sqm_max ?? ''),
     walk_minutes_max: String(cond?.walk_minutes_max ?? ''),
@@ -137,10 +143,13 @@ export default function CustomerForm({ initial, customerId }: Props) {
     try {
       const method = customerId ? 'PATCH' : 'POST'
       const endpoint = customerId ? `/api/customers/${customerId}` : '/api/customers'
+      const isSale = form.transaction_type === 'sale'
       const payload = {
         ...form,
-        budget_min: form.budget_min ? parseInt(form.budget_min) : null,
-        budget_max: form.budget_max ? parseInt(form.budget_max) : null,
+        budget_min: isSale && form.budget_min ? parseInt(form.budget_min) : null,
+        budget_max: isSale && form.budget_max ? parseInt(form.budget_max) : null,
+        rent_min: !isSale && form.rent_min ? parseInt(form.rent_min) : null,
+        rent_max: !isSale && form.rent_max ? parseInt(form.rent_max) : null,
         area_sqm_min: form.area_sqm_min ? parseFloat(form.area_sqm_min) : null,
         area_sqm_max: form.area_sqm_max ? parseFloat(form.area_sqm_max) : null,
         walk_minutes_max: form.walk_minutes_max ? parseInt(form.walk_minutes_max) : null,
@@ -165,7 +174,7 @@ export default function CustomerForm({ initial, customerId }: Props) {
           await fetch('/api/search-urls', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ customer_id: targetId, site, url: url.trim() }),
+            body: JSON.stringify({ customer_id: targetId, site, url: url.trim(), transaction_type: form.transaction_type }),
           })
         }
       }
@@ -267,7 +276,28 @@ export default function CustomerForm({ initial, customerId }: Props) {
 
       {/* ── 希望条件 ── */}
       <div className={SECTION}>
-        <h2 className="font-semibold text-lg mb-4 text-slate-800">希望条件</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold text-lg text-slate-800">希望条件</h2>
+          {/* 売買/賃貸 トグル */}
+          <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+            {(['sale', 'rent'] as const).map(t => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => set('transaction_type', t)}
+                className={`px-4 py-1.5 text-sm font-medium transition-colors ${
+                  form.transaction_type === t
+                    ? t === 'sale'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-purple-600 text-white'
+                    : 'bg-white text-slate-500 hover:bg-slate-50'
+                }`}
+              >
+                {t === 'sale' ? '売買' : '賃貸'}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className={LABEL}>希望エリア</label>
@@ -282,35 +312,79 @@ export default function CustomerForm({ initial, customerId }: Props) {
             <label className={LABEL}>物件種別</label>
             <select className={FIELD} value={form.property_type} onChange={e => set('property_type', e.target.value)}>
               <option value="">選択してください</option>
-              <option value="中古マンション">中古マンション</option>
-              <option value="新築マンション">新築マンション</option>
-              <option value="中古一戸建て">中古一戸建て</option>
-              <option value="新築一戸建て">新築一戸建て</option>
-              <option value="土地">土地</option>
+              {form.transaction_type === 'sale' ? (
+                <>
+                  <option value="中古マンション">中古マンション</option>
+                  <option value="新築マンション">新築マンション</option>
+                  <option value="中古一戸建て">中古一戸建て</option>
+                  <option value="新築一戸建て">新築一戸建て</option>
+                  <option value="土地">土地</option>
+                </>
+              ) : (
+                <>
+                  <option value="マンション">マンション</option>
+                  <option value="アパート">アパート</option>
+                  <option value="一戸建て">一戸建て</option>
+                  <option value="店舗・事務所">店舗・事務所</option>
+                  <option value="その他">その他</option>
+                </>
+              )}
             </select>
           </div>
-          <div>
-            <label className={LABEL}>予算下限（万円）</label>
-            <input
-              type="number"
-              className={FIELD}
-              value={form.budget_min}
-              onChange={e => set('budget_min', e.target.value)}
-              placeholder="例: 3000"
-              min="0"
-            />
-          </div>
-          <div>
-            <label className={LABEL}>予算上限（万円）</label>
-            <input
-              type="number"
-              className={FIELD}
-              value={form.budget_max}
-              onChange={e => set('budget_max', e.target.value)}
-              placeholder="例: 8000"
-              min="0"
-            />
-          </div>
+
+          {/* 売買: 予算 */}
+          {form.transaction_type === 'sale' ? (
+            <>
+              <div>
+                <label className={LABEL}>予算下限（万円）</label>
+                <input
+                  type="number"
+                  className={FIELD}
+                  value={form.budget_min}
+                  onChange={e => set('budget_min', e.target.value)}
+                  placeholder="例: 3000"
+                  min="0"
+                />
+              </div>
+              <div>
+                <label className={LABEL}>予算上限（万円）</label>
+                <input
+                  type="number"
+                  className={FIELD}
+                  value={form.budget_max}
+                  onChange={e => set('budget_max', e.target.value)}
+                  placeholder="例: 8000"
+                  min="0"
+                />
+              </div>
+            </>
+          ) : (
+            /* 賃貸: 賃料 */
+            <>
+              <div>
+                <label className={LABEL}>賃料下限（円/月）</label>
+                <input
+                  type="number"
+                  className={FIELD}
+                  value={form.rent_min}
+                  onChange={e => set('rent_min', e.target.value)}
+                  placeholder="例: 100000"
+                  min="0"
+                />
+              </div>
+              <div>
+                <label className={LABEL}>賃料上限（円/月）</label>
+                <input
+                  type="number"
+                  className={FIELD}
+                  value={form.rent_max}
+                  onChange={e => set('rent_max', e.target.value)}
+                  placeholder="例: 300000"
+                  min="0"
+                />
+              </div>
+            </>
+          )}
           <div>
             <label className={LABEL}>面積下限（㎡）</label>
             <input
