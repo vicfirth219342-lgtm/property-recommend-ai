@@ -30,6 +30,22 @@ export async function POST(req: NextRequest) {
   const supabase = createServiceClient()
   const startedAt = new Date()
 
+  // 顧客メールへの誤送信を防ぐため、ADMIN_EMAILS と顧客メールの交差を確認
+  const { data: customerEmailRows } = await supabase
+    .from('customers')
+    .select('email')
+    .not('email', 'is', null)
+
+  const customerEmails = new Set(
+    (customerEmailRows ?? []).map((r: { email: string }) => r.email?.toLowerCase()).filter(Boolean)
+  )
+  const forbidden = adminEmails.filter(e => customerEmails.has(e.toLowerCase()))
+  if (forbidden.length > 0) {
+    return NextResponse.json({
+      error: `ADMIN_EMAILS に顧客メールアドレスが含まれています: ${forbidden.join(', ')} — 送信を中止しました`,
+    }, { status: 400 })
+  }
+
   const { data: customers, error: custErr } = await supabase
     .from('customers')
     .select('id, name, customer_no, customer_conditions(*), customer_search_urls(*)')

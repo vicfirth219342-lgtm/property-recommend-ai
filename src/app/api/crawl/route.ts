@@ -17,7 +17,21 @@ const CRAWLERS: Record<SiteName, CrawlerFn> = {
 // 取得件数急減の閾値
 const DROP_THRESHOLD = 0.3
 
+// 公開ポータル（Playwright対応）のみクロール対象
+const PUBLIC_SITES: SiteName[] = ['suumo', 'athome', 'homes']
+
+// Vercel Serverless では Playwright が動作しない
+// このAPIはローカル or GitHub Actions 上でのみ実行すること
+const IS_VERCEL = Boolean(process.env.VERCEL)
+
 export async function POST(req: NextRequest) {
+  if (IS_VERCEL) {
+    return NextResponse.json({
+      error: 'Vercel Serverless環境ではPlaywrightクロールは実行できません。ローカルまたはGitHub Actionsから実行してください。',
+      hint: 'Run crawler locally: curl -X POST http://localhost:3003/api/crawl -H "Content-Type: application/json" -d \'{"mode":"diff"}\'',
+    }, { status: 503 })
+  }
+
   const supabase = createServiceClient()
   const body = await req.json()
   const {
@@ -26,12 +40,13 @@ export async function POST(req: NextRequest) {
     max_pages,
   } = body
 
-  // 対象顧客の検索URLを取得
+  // 公開ポータル（suumo/athome/homes）のみ対象。ログイン型は自動除外
   let urlQuery = supabase
     .from('customer_search_urls')
     .select('*, customers!inner(id, name, status)')
     .eq('is_active', true)
     .eq('customers.status', 'active')
+    .in('site', PUBLIC_SITES)
 
   if (customer_id) urlQuery = urlQuery.eq('customer_id', customer_id)
 
