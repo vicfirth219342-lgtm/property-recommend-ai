@@ -69,6 +69,7 @@ export async function POST(req: NextRequest) {
     }
 
     const cond = (customer.customer_conditions as Record<string, unknown>[])?.[0] ?? {}
+    const txType = (cond.transaction_type as 'sale' | 'rent') ?? 'sale'
     const summaryParts = [cond.area, cond.property_type].filter(Boolean) as string[]
 
     sections.push({
@@ -76,6 +77,7 @@ export async function POST(req: NextRequest) {
       customerNo: customer.customer_no ?? '',
       conditionSummary: summaryParts.join('・'),
       candidateCount: candidates.length,
+      transaction_type: txType,
       properties: candidates,
     })
     results.push({ customer: customer.name, status: 'included', count: candidates.length })
@@ -181,13 +183,21 @@ async function fetchCandidates(
     .order('first_seen_at', { ascending: false })
     .limit(200)
 
+  const txType = (cond?.transaction_type as string) ?? 'sale'
+  query = query.eq('transaction_type', txType)
+
   if (activeSites.length > 0) query = query.in('site', activeSites)
-  if (cond?.budget_min) query = query.gte('current_price', (cond.budget_min as number) * 10000)
-  if (cond?.budget_max) query = query.lte('current_price', (cond.budget_max as number) * 10000)
+  if (txType === 'sale') {
+    if (cond?.budget_min) query = query.gte('current_price', (cond.budget_min as number) * 10000)
+    if (cond?.budget_max) query = query.lte('current_price', (cond.budget_max as number) * 10000)
+  } else {
+    if (cond?.rent_min) query = query.gte('monthly_rent', cond.rent_min)
+    if (cond?.rent_max) query = query.lte('monthly_rent', cond.rent_max)
+  }
   if (cond?.area_sqm_min) query = query.gte('area_sqm', cond.area_sqm_min)
   if (cond?.area_sqm_max) query = query.lte('area_sqm', cond.area_sqm_max)
   if (cond?.walk_minutes_max) query = query.lte('walk_minutes', cond.walk_minutes_max)
-  if (cond?.building_age_max) query = query.lte('building_age', cond.building_age_max)
+  if (cond?.building_age_max) query = query.or(`building_age.lte.${cond.building_age_max},building_age.is.null`)
   if (cond?.area) query = query.ilike('address', `%${cond.area}%`)
 
   const { data: properties } = await query
@@ -196,8 +206,10 @@ async function fetchCandidates(
     .filter(p => !proposedSet.has(p.id))
     .map(p => {
       let priceChange = null
-      if (p.last_price !== null && p.current_price !== null && p.last_price !== p.current_price) {
-        const diff = p.current_price - p.last_price
+      const comparePrice = p.transaction_type === 'rent' ? p.monthly_rent : p.current_price
+      const lastPrice    = p.last_price
+      if (lastPrice !== null && comparePrice !== null && lastPrice !== comparePrice) {
+        const diff = comparePrice - lastPrice
         const diffMan = Math.round(diff / 10000)
         priceChange = {
           diff,
@@ -208,6 +220,13 @@ async function fetchCandidates(
       const isNew = p.first_seen_at
         ? Date.now() - new Date(p.first_seen_at).getTime() < 7 * 24 * 60 * 60 * 1000
         : false
-      return { ...p, priceChange, isNew }
+      return {
+        ...p,
+        transaction_type: p.transaction_type ?? 'sale',
+        monthly_rent: p.monthly_rent ?? null,
+        management_fee: p.management_fee ?? null,
+        priceChange,
+        isNew,
+      }
     })
 }

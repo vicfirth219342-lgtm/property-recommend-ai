@@ -43,7 +43,7 @@ async function parseTotalCount(page: import('playwright').Page): Promise<{ total
   }
 }
 
-async function scrapeOnePage(page: import('playwright').Page): Promise<ScrapedProperty[]> {
+async function scrapeOnePage(page: import('playwright').Page, transactionType: import('@/types').TransactionType = 'sale'): Promise<ScrapedProperty[]> {
   const properties: ScrapedProperty[] = []
   const selectors = [
     '[class*="propertyList"] li',
@@ -91,7 +91,16 @@ async function scrapeOnePage(page: import('playwright').Page): Promise<ScrapedPr
 
       if (!name || !url) continue
       properties.push({
-        site: 'athome', name, address, price, area_sqm, floor_plan,
+        site: 'athome',
+        transaction_type: transactionType,
+        name, address,
+        price: transactionType === 'sale' ? price : null,
+        monthly_rent: transactionType === 'rent' ? price : null,
+        management_fee: null, repair_fund: null, yield_rate: null,
+        land_area: null, building_area: null,
+        key_money: null, deposit: null, guarantee_money: null,
+        tsubo_count: null, tsubo_price: null, available_from: null,
+        area_sqm, floor_plan,
         building_age: buildingAge, built_year: builtYear, built_month: builtMonth,
         walk_minutes, url, thumbnail_url: thumbnail ?? null, room_number,
       })
@@ -104,7 +113,8 @@ export async function crawlAthome(
   baseUrl: string,
   customerId: string,
   options: CrawlOptions,
-  knownDedupKeys: Set<string>
+  knownDedupKeys: Set<string>,
+  transactionType: import('@/types').TransactionType = 'sale'
 ): Promise<PageCrawlResult> {
   const sortedUrl = addNewestFirstSort(baseUrl)
 
@@ -153,7 +163,7 @@ export async function crawlAthome(
         fs.writeFileSync(htmlPath, await page.content(), 'utf-8')
       }
 
-      const pageProps = await scrapeOnePage(page)
+      const pageProps = await scrapeOnePage(page, transactionType)
       checkedPages++
 
       if (pageProps.length === 0) {

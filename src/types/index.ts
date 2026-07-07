@@ -2,12 +2,18 @@ export type CustomerRank = 'A' | 'B' | 'C'
 export type CustomerStatus = 'active' | 'inactive'
 export type SiteName = 'suumo' | 'athome' | 'homes'
 export type PortalType = 'public' | 'login'
+export type TransactionType = 'sale' | 'rent'
+
+export const TRANSACTION_LABELS: Record<TransactionType, string> = {
+  sale: '売買',
+  rent: '賃貸',
+}
 
 export interface PortalPreset {
   name: string
   type: PortalType
   domain: string
-  site?: SiteName   // public portals のみ
+  site?: SiteName
 }
 export type CrawlStatus = 'success' | 'failure' | 'partial'
 
@@ -28,10 +34,16 @@ export interface Customer {
 export interface CustomerCondition {
   id: string
   customer_id: string
+  transaction_type: TransactionType
   area: string | null
   property_type: string | null
+  // 売買
   budget_min: number | null
   budget_max: number | null
+  // 賃貸
+  rent_min: number | null
+  rent_max: number | null
+  // 共通
   area_sqm_min: number | null
   area_sqm_max: number | null
   walk_minutes_max: number | null
@@ -45,6 +57,7 @@ export interface CustomerSearchUrl {
   id: string
   customer_id: string
   site: SiteName
+  transaction_type: TransactionType
   url: string
   is_active: boolean
   last_crawled_at: string | null
@@ -58,10 +71,28 @@ export interface CustomerSearchUrl {
 export interface Property {
   id: string
   site: SiteName
+  transaction_type: TransactionType
   site_property_id: string | null
   name: string
   address: string | null
+  // 売買
   price: number | null
+  current_price: number | null
+  last_price: number | null
+  management_fee: number | null
+  repair_fund: number | null
+  yield_rate: number | null
+  land_area: number | null
+  building_area: number | null
+  // 賃貸
+  monthly_rent: number | null
+  key_money: number | null
+  deposit: number | null
+  guarantee_money: number | null
+  tsubo_count: number | null
+  tsubo_price: number | null
+  available_from: string | null
+  // 共通
   area_sqm: number | null
   floor_plan: string | null
   building_age: number | null
@@ -75,8 +106,6 @@ export interface Property {
   dedup_key: string | null
   first_seen_at: string | null
   last_seen_at: string | null
-  last_price: number | null
-  current_price: number | null
   fetched_at: string
   created_at: string
 }
@@ -111,16 +140,29 @@ export interface CustomerWithCondition extends Customer {
 
 export interface ScrapedProperty {
   site: SiteName
+  transaction_type: TransactionType
   name: string
   address: string
+  // 売買
   price: number | null
+  management_fee: number | null
+  repair_fund: number | null
+  yield_rate: number | null
+  land_area: number | null
+  building_area: number | null
+  // 賃貸
+  monthly_rent: number | null
+  key_money: number | null
+  deposit: number | null
+  guarantee_money: number | null
+  tsubo_count: number | null
+  tsubo_price: number | null
+  available_from: string | null
+  // 共通
   area_sqm: number | null
   floor_plan: string | null
-  /** 一覧テキストから計算済みの築年数（保存用）。パーサー経由で設定 */
   building_age: number | null
-  /** 竣工年（西暦） */
   built_year: number | null
-  /** 竣工月（1〜12） */
   built_month: number | null
   walk_minutes: number | null
   url: string
@@ -138,8 +180,8 @@ export type StoppedReason =
   | 'no_results'
 
 export interface PageCrawlResult {
-  properties: ScrapedProperty[]       // 新規物件（DB挿入対象）
-  seenProperties: ScrapedProperty[]   // 既知物件（last_seen_at・価格更新対象）
+  properties: ScrapedProperty[]
+  seenProperties: ScrapedProperty[]
   totalCount: number | null
   totalPages: number | null
   checkedPages: number
@@ -160,15 +202,15 @@ export interface ConditionMatchItem {
 }
 
 export interface PropertyWithMatch extends ScrapedProperty {
-  propertyId?: string          // DB保存後のID（提案登録に使用）
+  propertyId?: string
   isNew: boolean
   isDuplicate: boolean
-  matchScore: number           // 0.0〜1.0
+  matchScore: number
   matchItems: ConditionMatchItem[]
 }
 
 export interface ManualCrawlResult {
-  site: string                 // 検出されたサイト名
+  site: string
   portalName: string
   portalType: PortalType
   totalCount: number | null
@@ -184,6 +226,6 @@ export interface ManualCrawlResult {
 
 export interface CrawlOptions {
   mode: CrawlMode
-  maxPages?: number           // 明示的上限（mode より優先）
-  stopOnDuplicateCount?: number  // diff: N件連続重複で停止（デフォルト20）
+  maxPages?: number
+  stopOnDuplicateCount?: number
 }

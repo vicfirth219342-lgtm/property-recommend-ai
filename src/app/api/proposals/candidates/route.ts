@@ -46,12 +46,17 @@ export async function GET(req: NextRequest) {
 
   // 提案済み除外はJS側フィルタで処理（下の proposedSet.has(p.id) を参照）
 
-  // 予算フィルタ（条件は万円単位、propertiesは円単位）
-  if (cond?.budget_min) {
-    query = query.gte('current_price', cond.budget_min * 10000)
-  }
-  if (cond?.budget_max) {
-    query = query.lte('current_price', cond.budget_max * 10000)
+  // 売買/賃貸を混在させない
+  const txType = cond?.transaction_type ?? 'sale'
+  query = query.eq('transaction_type', txType)
+
+  // 予算/賃料フィルタ
+  if (txType === 'sale') {
+    if (cond?.budget_min) query = query.gte('current_price', cond.budget_min * 10000)
+    if (cond?.budget_max) query = query.lte('current_price', cond.budget_max * 10000)
+  } else {
+    if (cond?.rent_min) query = query.gte('monthly_rent', cond.rent_min)
+    if (cond?.rent_max) query = query.lte('monthly_rent', cond.rent_max)
   }
 
   // 面積フィルタ

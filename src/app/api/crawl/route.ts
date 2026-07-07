@@ -82,7 +82,8 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      const crawlResult = await crawler(su.url, su.customer_id, options, knownDedupKeys)
+      const txType = (su.transaction_type ?? 'sale') as import('@/types').TransactionType
+      const crawlResult = await crawler(su.url, su.customer_id, options, knownDedupKeys, txType)
       const finishedAt = new Date()
       const duration = finishedAt.getTime() - startedAt.getTime()
 
@@ -235,9 +236,23 @@ async function saveProperties(
       .from('properties')
       .insert({
         site: prop.site,
+        transaction_type: prop.transaction_type,
         name: prop.name,
         address: prop.address,
         price: prop.price,
+        current_price: prop.transaction_type === 'rent' ? prop.monthly_rent : prop.price,
+        monthly_rent: prop.monthly_rent ?? null,
+        management_fee: prop.management_fee ?? null,
+        repair_fund: prop.repair_fund ?? null,
+        yield_rate: prop.yield_rate ?? null,
+        land_area: prop.land_area ?? null,
+        building_area: prop.building_area ?? null,
+        key_money: prop.key_money ?? null,
+        deposit: prop.deposit ?? null,
+        guarantee_money: prop.guarantee_money ?? null,
+        tsubo_count: prop.tsubo_count ?? null,
+        tsubo_price: prop.tsubo_price ?? null,
+        available_from: prop.available_from ?? null,
         area_sqm: prop.area_sqm,
         floor_plan: prop.floor_plan,
         building_age: prop.building_age,
@@ -251,7 +266,6 @@ async function saveProperties(
         raw_hash: rawHash,
         first_seen_at: now,
         last_seen_at: now,
-        current_price: prop.price,
       })
       .select('id')
       .single()
