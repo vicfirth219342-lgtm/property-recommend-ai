@@ -1,0 +1,116 @@
+name: Manual Crawl (On-Demand)
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: 'crawl_jobs.id (UUID)'
+        required: true
+      customer_id:
+        description: '顧客ID'
+        required: true
+      crawl_url:
+        description: '探索URL'
+        required: true
+      site:
+        description: 'suumo / athome / homes'
+        required: true
+      max_pages:
+        description: '最大ページ数'
+        required: false
+        default: '3'
+      portal_name:
+        description: 'ポータル名（表示用）'
+        required: false
+        default: ''
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      RESEND_FROM: ${{ secrets.RESEND_FROM }}
+      ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
+      NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+
+      - name: Build Next.js
+        run: npm run build
+
+      - name: Start Next.js server
+        run: npx next start -p 3003 &
+
+      - name: Wait for server to be ready
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3003/api/health && echo "Server ready" && break
+            echo "Waiting... ($i/30)"
+            sleep 2
+          done
+
+      - name: Run manual crawl
+        run: |
+          python3 << 'PYEOF'
+          import urllib.request
+          import urllib.error
+          import json
+          import os
+          import sys
+
+          payload = json.dumps({
+            "jobId":      os.environ["JOB_ID"],
+            "customerId": os.environ["CUSTOMER_ID"],
+            "crawlUrl":   os.environ["CRAWL_URL"],
+            "site":       os.environ["SITE"],
+            "maxPages":   int(os.environ.get("MAX_PAGES", "3")),
+            "portalName": os.environ.get("PORTAL_NAME", ""),
+          }).encode("utf-8")
+
+          req = urllib.request.Request(
+            "http://localhost:3003/api/manual-crawl/run",
+            data=payload,
+            headers={
+              "Content-Type": "application/json",
+              "Authorization": f"Bearer {os.environ['CRON_SECRET']}",
+            },
+            method="POST",
+          )
+
+          try:
+            with urllib.request.urlopen(req, timeout=1500) as res:
+              body = json.loads(res.read().decode("utf-8"))
+              print(json.dumps(body, indent=2, ensure_ascii=False))
+              if not body.get("ok"):
+                print("ERROR:", body.get("error"), file=sys.stderr)
+                sys.exit(1)
+          except urllib.error.HTTPError as e:
+            print(f"HTTP {e.code}: {e.read().decode()}", file=sys.stderr)
+            sys.exit(1)
+          PYEOF
+        env:
+          JOB_ID:       ${{ inputs.job_id }}
+          CUSTOMER_ID:  ${{ inputs.customer_id }}
+          CRAWL_URL:    ${{ inputs.crawl_url }}
+          SITE:         ${{ inputs.site }}
+          MAX_PAGES:    ${{ inputs.max_pages }}
+          PORTAL_NAME:  ${{ inputs.portal_name }}
+          CRON_SECRET:  ${{ secrets.CRON_SECRET }}

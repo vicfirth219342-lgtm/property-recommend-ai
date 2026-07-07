@@ -1,23 +1,36 @@
 'use client'
-import { useEffect, useState } from 'react'
-import { ManualCrawlResult, PropertyWithMatch, ConditionMatchItem } from '@/types'
+import { useEffect, useRef, useState } from 'react'
+import { PropertyWithMatch, ConditionMatchItem } from '@/types'
 
 const PORTAL_PRESETS = [
-  { name: 'SUUMO',          type: 'public', hint: 'suumo.jp' },
-  { name: 'アットホーム',    type: 'public', hint: 'athome.co.jp' },
-  { name: "LIFULL HOME'S",  type: 'public', hint: 'homes.co.jp' },
-  { name: 'イタンジ',        type: 'login',  hint: 'itandibb.jp' },
-  { name: 'レインズ',        type: 'login',  hint: 'reins.or.jp' },
-  { name: 'その他',          type: 'login',  hint: '' },
+  { name: 'SUUMO',         hint: 'suumo.jp' },
+  { name: 'アットホーム',   hint: 'athome.co.jp' },
+  { name: "LIFULL HOME'S", hint: 'homes.co.jp' },
 ]
 
 const PAGE_OPTIONS = [
-  { value: 1,  label: '1ページのみ',   desc: '動作確認・速度優先' },
-  { value: 3,  label: '最大3ページ',   desc: '直近の新着を確認' },
-  { value: 10, label: '最大10ページ',  desc: '広めに取得' },
+  { value: 1,  label: '1ページ',   desc: '動作確認' },
+  { value: 3,  label: '3ページ',   desc: '新着確認（推奨）' },
+  { value: 10, label: '10ページ',  desc: '広範囲取得' },
 ]
 
 interface Customer { id: string; name: string; customer_no: string }
+
+type JobStatus = 'idle' | 'pending' | 'running' | 'completed' | 'failed'
+
+interface CrawlJob {
+  id: string
+  status: JobStatus
+  site: string
+  portal_name: string
+  properties_found: number | null
+  new_count: number | null
+  result: { properties: (PropertyWithMatch & { isAlreadyProposed?: boolean })[] } | null
+  error_message: string | null
+  started_at: string | null
+  finished_at: string | null
+  created_at: string
+}
 
 function MatchBadge({ item }: { item: ConditionMatchItem }) {
   const color = item.match === 'ok' ? 'text-green-700 bg-green-50' :
@@ -53,7 +66,7 @@ function PropertyCard({
 }: {
   prop: PropertyWithMatch & { isAlreadyProposed?: boolean }
   customerId: string
-  onProposed: (propertyId: string) => void
+  onProposed: (id: string) => void
 }) {
   const [proposing, setProposing] = useState(false)
   const [done, setDone] = useState(prop.isAlreadyProposed ?? false)
@@ -64,79 +77,58 @@ function PropertyCard({
     const res = await fetch('/api/proposals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customer_id: customerId, property_id: prop.propertyId }),
+      body: JSON.stringify({ customer_id: customerId, property_ids: [prop.propertyId] }),
     })
-    if (res.ok) {
-      setDone(true)
-      onProposed(prop.propertyId)
-    }
+    if (res.ok) { setDone(true); onProposed(prop.propertyId) }
     setProposing(false)
   }
 
-  const formatPrice = (p: number | null) =>
-    p ? `${(p / 10000).toLocaleString()}万円` : '価格未定'
+  const formatPrice = (p: number | null) => p ? `${(p / 10000).toLocaleString()}万円` : '価格未定'
 
   return (
     <div className={`border rounded-xl p-4 transition-colors ${
       done ? 'bg-green-50 border-green-200' :
-      prop.matchScore >= 0.8 ? 'bg-white border-slate-200' :
-      prop.matchScore >= 0.5 ? 'bg-white border-slate-200' :
-      'bg-white border-slate-100 opacity-80'
+      prop.matchScore >= 0.8 ? 'bg-white border-slate-200' : 'bg-white border-slate-100 opacity-80'
     }`}>
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
-            {prop.isNew && (
-              <span className="text-xs bg-blue-500 text-white px-1.5 py-0.5 rounded font-medium">新規</span>
-            )}
-            {done && (
-              <span className="text-xs bg-green-600 text-white px-1.5 py-0.5 rounded font-medium">提案済</span>
-            )}
+            {prop.isNew && <span className="text-xs bg-blue-500 text-white px-1.5 py-0.5 rounded font-medium">新規</span>}
+            {done && <span className="text-xs bg-green-600 text-white px-1.5 py-0.5 rounded font-medium">提案済</span>}
             <span className="text-xs text-slate-400 uppercase">{prop.site}</span>
           </div>
           <a href={prop.url} target="_blank" rel="noopener noreferrer"
              className="font-semibold text-sm text-blue-800 hover:underline leading-tight block truncate">
             {prop.name}
           </a>
-          {prop.address && (
-            <p className="text-xs text-slate-500 mt-0.5 truncate">{prop.address}</p>
-          )}
+          {prop.address && <p className="text-xs text-slate-500 mt-0.5 truncate">{prop.address}</p>}
         </div>
-        <div className="text-right shrink-0">
+        <div className="text-right flex-shrink-0">
           <div className="font-bold text-slate-800">{formatPrice(prop.price)}</div>
-          <div className="text-xs text-slate-400 mt-0.5">
-            {[prop.floor_plan, prop.area_sqm ? `${prop.area_sqm}㎡` : null].filter(Boolean).join(' / ')}
-          </div>
+          {prop.floor_plan && <div className="text-xs text-slate-500">{prop.floor_plan}</div>}
         </div>
       </div>
 
-      {/* スペック */}
-      <div className="flex gap-3 text-xs text-slate-500 mb-2">
-        {prop.walk_minutes   && <span>徒歩{prop.walk_minutes}分</span>}
-        {prop.building_age   && <span>築{prop.building_age}年</span>}
-        {prop.room_number    && <span>{prop.room_number}</span>}
+      <div className="flex gap-2 text-xs text-slate-500 mb-2 flex-wrap">
+        {prop.area_sqm && <span className="bg-slate-50 px-1.5 py-0.5 rounded">{prop.area_sqm}㎡</span>}
+        {prop.walk_minutes && <span className="bg-slate-50 px-1.5 py-0.5 rounded">徒歩{prop.walk_minutes}分</span>}
+        {prop.building_age !== null && <span className="bg-slate-50 px-1.5 py-0.5 rounded">築{prop.building_age}年</span>}
       </div>
 
-      {/* 条件照合 */}
-      {prop.matchItems.length > 0 && (
-        <div className="mb-2">
-          <ScoreBar score={prop.matchScore} />
-          <div className="flex flex-wrap gap-1 mt-1.5">
-            {prop.matchItems.map((item, i) => <MatchBadge key={i} item={item} />)}
-          </div>
+      <ScoreBar score={prop.matchScore} />
+
+      {prop.matchItems && prop.matchItems.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-2">
+          {prop.matchItems.map((item, i) => <MatchBadge key={i} item={item} />)}
         </div>
       )}
 
-      {/* 提案ボタン */}
       <div className="flex justify-end mt-2">
         {done ? (
           <span className="text-xs text-green-700 font-medium">✓ 提案候補に追加済</span>
         ) : (
-          <button
-            onClick={propose}
-            disabled={proposing || !prop.propertyId}
-            className="text-xs bg-slate-800 text-white px-3 py-1.5 rounded-lg hover:bg-slate-700 disabled:opacity-40 transition-colors font-medium"
-          >
+          <button onClick={propose} disabled={proposing || !prop.propertyId}
+            className="text-xs bg-slate-800 text-white px-3 py-1.5 rounded-lg hover:bg-slate-700 disabled:opacity-40 transition-colors font-medium">
             {proposing ? '追加中...' : '提案候補に追加'}
           </button>
         )}
@@ -145,18 +137,74 @@ function PropertyCard({
   )
 }
 
+// ジョブステータスバー
+function JobStatusBanner({ job, elapsed }: { job: CrawlJob; elapsed: number }) {
+  if (job.status === 'pending') {
+    return (
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-center gap-3">
+        <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+        <div>
+          <p className="text-sm font-semibold text-blue-800">GitHub Actions を起動しています...</p>
+          <p className="text-xs text-blue-600 mt-0.5">
+            初回起動に1〜2分かかります。このページを開いたままお待ちください。（{elapsed}秒経過）
+          </p>
+        </div>
+      </div>
+    )
+  }
+  if (job.status === 'running') {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center gap-3">
+        <div className="w-5 h-5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+        <div>
+          <p className="text-sm font-semibold text-amber-800">探索中です...</p>
+          <p className="text-xs text-amber-600 mt-0.5">
+            {job.portal_name} を巡回しています。（{elapsed}秒経過）
+          </p>
+        </div>
+      </div>
+    )
+  }
+  if (job.status === 'completed') {
+    return (
+      <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-center gap-3">
+        <span className="text-green-500 text-xl flex-shrink-0">✓</span>
+        <div>
+          <p className="text-sm font-semibold text-green-800">探索完了</p>
+          <p className="text-xs text-green-600 mt-0.5">
+            {job.properties_found ?? 0}件取得、うち新規 <strong>{job.new_count ?? 0}件</strong> をDBに保存しました。
+          </p>
+        </div>
+      </div>
+    )
+  }
+  if (job.status === 'failed') {
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+        <p className="text-sm font-semibold text-red-800">探索に失敗しました</p>
+        {job.error_message && <p className="text-xs text-red-600 mt-1 whitespace-pre-wrap">{job.error_message}</p>}
+      </div>
+    )
+  }
+  return null
+}
+
 export default function ManualCrawlPage() {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [portalPreset, setPortalPreset] = useState(PORTAL_PRESETS[0])
-  const [portalName, setPortalName] = useState(PORTAL_PRESETS[0].name)
   const [url, setUrl] = useState('')
   const [customerId, setCustomerId] = useState('')
   const [maxPages, setMaxPages] = useState(3)
-  const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState<ManualCrawlResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [proposedIds, setProposedIds] = useState<Set<string>>(new Set())
+  const [submitting, setSubmitting] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+
+  const [job, setJob] = useState<CrawlJob | null>(null)
+  const [elapsed, setElapsed] = useState(0)
   const [filter, setFilter] = useState<'all' | 'matched'>('all')
+  const [proposedIds, setProposedIds] = useState<Set<string>>(new Set())
+
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     fetch('/api/customers')
@@ -168,233 +216,195 @@ export default function ManualCrawlPage() {
       })
   }, [])
 
-  async function run() {
-    if (!url.trim() || !customerId) return
-    setLoading(true)
-    setError(null)
-    setResult(null)
-    setProposedIds(new Set())
-    try {
-      const res = await fetch('/api/manual-crawl', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ portalName, url: url.trim(), customerId, maxPages }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        setError(data.error ?? '探索に失敗しました')
-        return
+  function startPolling(jobId: string) {
+    setElapsed(0)
+    elapsedRef.current = setInterval(() => setElapsed(s => s + 1), 1000)
+
+    pollRef.current = setInterval(async () => {
+      const res = await fetch(`/api/manual-crawl/status/${jobId}`)
+      if (!res.ok) return
+      const data: CrawlJob = await res.json()
+      setJob(data)
+      if (data.status === 'completed' || data.status === 'failed') {
+        clearInterval(pollRef.current!)
+        clearInterval(elapsedRef.current!)
       }
-      setResult(data)
-    } finally {
-      setLoading(false)
+    }, 5000)
+  }
+
+  useEffect(() => () => {
+    if (pollRef.current) clearInterval(pollRef.current)
+    if (elapsedRef.current) clearInterval(elapsedRef.current)
+  }, [])
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!url.trim() || !customerId) return
+    setSubmitting(true)
+    setFormError(null)
+    setJob(null)
+    setFilter('all')
+    setProposedIds(new Set())
+
+    const res = await fetch('/api/manual-crawl', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        portalName: portalPreset.name,
+        url: url.trim(),
+        customerId,
+        maxPages,
+      }),
+    })
+    const data = await res.json()
+    setSubmitting(false)
+
+    if (!res.ok) {
+      setFormError(data.error ?? '探索の開始に失敗しました')
+      return
     }
+
+    // ジョブIDでポーリング開始
+    const newJob: CrawlJob = {
+      id: data.jobId,
+      status: 'pending',
+      site: '',
+      portal_name: portalPreset.name,
+      properties_found: null,
+      new_count: null,
+      result: null,
+      error_message: null,
+      started_at: null,
+      finished_at: null,
+      created_at: new Date().toISOString(),
+    }
+    setJob(newJob)
+    startPolling(data.jobId)
   }
 
-  function selectPreset(preset: typeof PORTAL_PRESETS[0]) {
-    setPortalPreset(preset)
-    setPortalName(preset.name)
-    setUrl('')
-  }
+  const isActive = job?.status === 'pending' || job?.status === 'running'
 
-  const displayedProps = result?.properties.filter(p =>
-    filter === 'all' ? true : p.matchScore >= 0.5
-  ) ?? []
+  const displayedProps = (job?.result?.properties ?? [])
+    .filter(p => !proposedIds.has(p.propertyId ?? ''))
+    .filter(p => filter === 'all' ? true : p.matchScore >= 0.5)
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-800">ログイン型ポータル 手動探索</h1>
+        <h1 className="text-2xl font-bold text-slate-800">手動探索</h1>
         <p className="text-sm text-slate-500 mt-1">
-          ポータルサイトで検索した結果URLを貼り付けて、物件を取得・提案候補に追加できます。
-          <br />
-          <span className="text-amber-600 font-medium">※ この画面での探索は自動巡回・Cronメールの対象外です。</span>
+          検索URLを貼り付けて物件を取得します。GitHub Actions経由でPlaywrightが実行されます。
         </p>
       </div>
 
-      {/* Vercel環境での注意 */}
-      <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 mb-6 flex gap-3">
-        <span className="text-amber-500 text-xl flex-shrink-0">⚠</span>
-        <div>
-          <p className="text-sm font-semibold text-amber-800">この機能はローカル環境専用です</p>
-          <p className="text-xs text-amber-700 mt-1">
-            Vercel（本番）環境ではPlaywrightが動作しないため、探索実行はできません。<br />
-            ローカルで <code className="bg-amber-100 px-1 rounded">npm run dev</code> を起動し、<strong>http://localhost:3003/manual-crawl</strong> から操作してください。
-          </p>
-        </div>
-      </div>
-
       {/* フォーム */}
-      <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6">
+      <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-slate-200 p-6 mb-6 space-y-5">
         {/* ポータル選択 */}
-        <div className="mb-5">
-          <label className="block text-sm font-medium text-slate-700 mb-2">ポータル名</label>
-          <div className="flex flex-wrap gap-2 mb-2">
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-2">ポータル</label>
+          <div className="flex flex-wrap gap-2">
             {PORTAL_PRESETS.map(p => (
-              <button
-                key={p.name}
-                onClick={() => selectPreset(p)}
+              <button key={p.name} type="button" onClick={() => setPortalPreset(p)}
                 className={`px-3 py-1.5 rounded-lg text-sm border-2 transition-colors ${
                   portalPreset.name === p.name
                     ? 'border-slate-700 bg-slate-50 font-semibold text-slate-800'
-                    : 'border-slate-300 text-slate-700 hover:border-slate-500 hover:text-slate-800'
-                }`}
-              >
+                    : 'border-slate-200 text-slate-600 hover:border-slate-400'
+                }`}>
                 {p.name}
-                {p.type === 'login' && (
-                  <span className="ml-1 text-xs text-amber-500">[要ログイン]</span>
-                )}
               </button>
             ))}
           </div>
-          {portalPreset.name === 'その他' && (
-            <input
-              type="text"
-              value={portalName}
-              onChange={e => setPortalName(e.target.value)}
-              placeholder="ポータル名を入力"
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
-            />
-          )}
-          {portalPreset.type === 'login' && (
-            <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
-              <strong>ログイン型ポータルについて：</strong>
-              ブラウザで手動ログイン後、検索結果ページのURLをコピーして貼り付けてください。
-              セッションの問題で取得できない場合があります。ID・パスワードの保存はしません。
-            </div>
-          )}
+          <p className="text-xs text-slate-400 mt-1.5">対応: {portalPreset.hint}</p>
+        </div>
+
+        {/* 顧客選択 */}
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">対象顧客</label>
+          <select className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
+            value={customerId} onChange={e => setCustomerId(e.target.value)}>
+            {customers.map(c => (
+              <option key={c.id} value={c.id}>{c.customer_no} — {c.name}</option>
+            ))}
+          </select>
         </div>
 
         {/* URL入力 */}
-        <div className="mb-5">
-          <label className="block text-sm font-medium text-slate-700 mb-2">
-            検索結果URL
-          </label>
-          <textarea
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">検索結果URL</label>
+          <input
+            type="url"
             value={url}
             onChange={e => setUrl(e.target.value)}
-            placeholder={`https://${portalPreset.hint || 'example.com'}/...`}
-            rows={3}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-slate-400 resize-none placeholder:text-slate-400"
+            placeholder={`https://www.${portalPreset.hint}/...`}
+            required
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-slate-300"
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-5 mb-5">
-          {/* 対象顧客 */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">対象顧客</label>
-            <select
-              value={customerId}
-              onChange={e => setCustomerId(e.target.value)}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
-            >
-              {customers.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.name}（{c.customer_no}）
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* 探索モード */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">探索範囲</label>
-            <div className="flex flex-col gap-1.5">
-              {PAGE_OPTIONS.map(opt => (
-                <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="maxPages"
-                    value={opt.value}
-                    checked={maxPages === opt.value}
-                    onChange={() => setMaxPages(opt.value)}
-                    className="accent-slate-700"
-                  />
-                  <span className="text-sm font-medium text-slate-800">{opt.label}</span>
-                  <span className="text-xs text-slate-500">{opt.desc}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <button
-          onClick={run}
-          disabled={loading || !url.trim() || !customerId}
-          className="bg-slate-800 text-white px-6 py-2.5 rounded-lg hover:bg-slate-700 disabled:opacity-40 transition-colors font-medium"
-        >
-          {loading ? '探索中... しばらくお待ちください' : '探索実行'}
-        </button>
-      </div>
-
-      {/* エラー */}
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 whitespace-pre-wrap text-sm text-red-700">
-          {error}
-        </div>
-      )}
-
-      {/* 結果 */}
-      {result && (
+        {/* ページ数 */}
         <div>
-          {/* サマリー */}
-          <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-semibold text-lg">
-                探索結果
-                <span className="ml-2 text-sm font-normal text-slate-400">{result.portalName}</span>
-              </h2>
-              <span className="text-xs text-slate-400">
-                {result.checkedPages}ページ巡回 / 停止: {result.stoppedReason}
-              </span>
-            </div>
-            <div className="grid grid-cols-4 gap-3 mb-4">
-              {[
-                { label: '取得物件', value: result.fetchedCount, color: '' },
-                { label: '新規',     value: result.newCount,     color: 'text-blue-700' },
-                { label: '重複',     value: result.duplicateCount, color: 'text-slate-400' },
-                { label: '条件照合', value: `${result.properties.filter(p => p.matchScore >= 0.5).length}/${result.properties.length}`, color: 'text-green-700' },
-              ].map(s => (
-                <div key={s.label} className="bg-slate-50 rounded-lg p-3 text-center">
-                  <div className={`text-2xl font-bold ${s.color || 'text-slate-800'}`}>{s.value}</div>
-                  <div className="text-xs text-slate-500 mt-0.5">{s.label}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* フィルター */}
-            <div className="flex gap-2">
-              <button
-                onClick={() => setFilter('all')}
-                className={`text-sm px-3 py-1.5 rounded-lg border transition-colors ${filter === 'all' ? 'border-slate-700 bg-slate-50 font-medium' : 'border-slate-200'}`}
-              >
-                全件 ({result.properties.length})
+          <label className="block text-sm font-medium text-slate-700 mb-2">取得ページ数</label>
+          <div className="flex gap-2">
+            {PAGE_OPTIONS.map(o => (
+              <button key={o.value} type="button" onClick={() => setMaxPages(o.value)}
+                className={`flex-1 border-2 rounded-lg py-2 text-center transition-colors ${
+                  maxPages === o.value
+                    ? 'border-slate-700 bg-slate-50'
+                    : 'border-slate-200 hover:border-slate-400'
+                }`}>
+                <div className="font-semibold text-sm text-slate-800">{o.label}</div>
+                <div className="text-xs text-slate-400 mt-0.5">{o.desc}</div>
               </button>
-              <button
-                onClick={() => setFilter('matched')}
-                className={`text-sm px-3 py-1.5 rounded-lg border transition-colors ${filter === 'matched' ? 'border-slate-700 bg-slate-50 font-medium' : 'border-slate-200'}`}
-              >
-                条件合致のみ ({result.properties.filter(p => p.matchScore >= 0.5).length})
-              </button>
-            </div>
-          </div>
-
-          {/* 物件リスト */}
-          <div className="grid grid-cols-1 gap-3">
-            {displayedProps.map((prop, i) => (
-              <PropertyCard
-                key={i}
-                prop={prop}
-                customerId={customerId}
-                onProposed={id => setProposedIds(prev => new Set([...prev, id]))}
-              />
             ))}
-            {displayedProps.length === 0 && (
-              <div className="text-center py-10 text-slate-400">
-                {filter === 'matched' ? '条件に合致する物件がありません' : '物件が取得できませんでした'}
-              </div>
-            )}
           </div>
+        </div>
+
+        {formError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700 whitespace-pre-wrap">
+            {formError}
+          </div>
+        )}
+
+        <button type="submit" disabled={submitting || isActive || !url.trim()}
+          className="w-full bg-slate-800 text-white py-2.5 rounded-lg font-semibold hover:bg-slate-700 disabled:opacity-40 transition-colors">
+          {submitting ? '起動中...' : isActive ? '探索中（別のジョブが実行中）' : '今すぐ探索'}
+        </button>
+      </form>
+
+      {/* ジョブ状態 */}
+      {job && (
+        <div className="space-y-4">
+          <JobStatusBanner job={job} elapsed={elapsed} />
+
+          {/* 結果 */}
+          {job.status === 'completed' && job.result && (
+            <div>
+              {/* フィルター */}
+              <div className="flex gap-2 mb-4">
+                {(['all', 'matched'] as const).map(f => (
+                  <button key={f} onClick={() => setFilter(f)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                      filter === f ? 'bg-slate-800 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}>
+                    {f === 'all' ? `全件 (${job.result!.properties.length})` : '条件一致のみ'}
+                  </button>
+                ))}
+              </div>
+
+              {displayedProps.length === 0 ? (
+                <div className="text-center text-slate-400 py-12 bg-white rounded-xl border border-slate-200">
+                  {filter !== 'all' ? '条件に合致する物件がありません' : '物件が見つかりませんでした'}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {displayedProps.map((p, i) => (
+                    <PropertyCard key={i} prop={p} customerId={customerId}
+                      onProposed={id => setProposedIds(prev => new Set([...prev, id]))} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
