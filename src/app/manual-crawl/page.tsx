@@ -1,20 +1,32 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { PropertyWithMatch, ConditionMatchItem } from '@/types'
+import { PropertyWithMatch, ConditionMatchItem, CustomerCondition } from '@/types'
+import { buildSearchUrl, SiteKey } from '@/lib/buildSearchUrl'
 
-const PORTAL_PRESETS = [
-  { name: 'SUUMO',         hint: 'suumo.jp' },
-  { name: 'アットホーム',   hint: 'athome.co.jp' },
-  { name: "LIFULL HOME'S", hint: 'homes.co.jp' },
+// -------------------------------------------------------
+// 定数
+// -------------------------------------------------------
+const PORTALS: { key: SiteKey; name: string; hint: string }[] = [
+  { key: 'suumo',  name: 'SUUMO',          hint: 'suumo.jp' },
+  { key: 'athome', name: 'アットホーム',    hint: 'athome.co.jp' },
+  { key: 'homes',  name: "LIFULL HOME'S",  hint: 'homes.co.jp' },
 ]
 
 const PAGE_OPTIONS = [
-  { value: 1,  label: '1ページ',   desc: '動作確認' },
-  { value: 3,  label: '3ページ',   desc: '新着確認（推奨）' },
-  { value: 10, label: '10ページ',  desc: '広範囲取得' },
+  { value: 1,  label: '1ページ',  desc: '動作確認' },
+  { value: 3,  label: '3ページ',  desc: '新着確認（推奨）' },
+  { value: 10, label: '10ページ', desc: '広範囲取得' },
 ]
 
-interface Customer { id: string; name: string; customer_no: string }
+// -------------------------------------------------------
+// 型
+// -------------------------------------------------------
+interface CustomerWithCondition {
+  id: string
+  name: string
+  customer_no: string
+  customer_conditions: CustomerCondition[]
+}
 
 type JobStatus = 'idle' | 'pending' | 'running' | 'completed' | 'failed'
 
@@ -32,6 +44,9 @@ interface CrawlJob {
   created_at: string
 }
 
+// -------------------------------------------------------
+// 小コンポーネント
+// -------------------------------------------------------
 function MatchBadge({ item }: { item: ConditionMatchItem }) {
   const color = item.match === 'ok' ? 'text-green-700 bg-green-50' :
                 item.match === 'ng' ? 'text-red-600 bg-red-50' :
@@ -47,7 +62,7 @@ function MatchBadge({ item }: { item: ConditionMatchItem }) {
 }
 
 function ScoreBar({ score }: { score: number }) {
-  const pct = Math.round(score * 100)
+  const pct   = Math.round(score * 100)
   const color = score >= 0.8 ? 'bg-green-500' : score >= 0.5 ? 'bg-amber-400' : 'bg-red-400'
   return (
     <div className="flex items-center gap-2">
@@ -93,8 +108,8 @@ function PropertyCard({
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
-            {prop.isNew && <span className="text-xs bg-blue-500 text-white px-1.5 py-0.5 rounded font-medium">新規</span>}
-            {done && <span className="text-xs bg-green-600 text-white px-1.5 py-0.5 rounded font-medium">提案済</span>}
+            {prop.isNew  && <span className="text-xs bg-blue-500 text-white px-1.5 py-0.5 rounded font-medium">新規</span>}
+            {done        && <span className="text-xs bg-green-600 text-white px-1.5 py-0.5 rounded font-medium">提案済</span>}
             <span className="text-xs text-slate-400 uppercase">{prop.site}</span>
           </div>
           <a href={prop.url} target="_blank" rel="noopener noreferrer"
@@ -110,7 +125,7 @@ function PropertyCard({
       </div>
 
       <div className="flex gap-2 text-xs text-slate-500 mb-2 flex-wrap">
-        {prop.area_sqm && <span className="bg-slate-50 px-1.5 py-0.5 rounded">{prop.area_sqm}㎡</span>}
+        {prop.area_sqm     && <span className="bg-slate-50 px-1.5 py-0.5 rounded">{prop.area_sqm}㎡</span>}
         {prop.walk_minutes && <span className="bg-slate-50 px-1.5 py-0.5 rounded">徒歩{prop.walk_minutes}分</span>}
         {prop.building_age !== null && <span className="bg-slate-50 px-1.5 py-0.5 rounded">築{prop.building_age}年</span>}
       </div>
@@ -137,7 +152,6 @@ function PropertyCard({
   )
 }
 
-// ジョブステータスバー
 function JobStatusBanner({ job, elapsed }: { job: CrawlJob; elapsed: number }) {
   if (job.status === 'pending') {
     return (
@@ -189,32 +203,75 @@ function JobStatusBanner({ job, elapsed }: { job: CrawlJob; elapsed: number }) {
   return null
 }
 
-export default function ManualCrawlPage() {
-  const [customers, setCustomers] = useState<Customer[]>([])
-  const [portalPreset, setPortalPreset] = useState(PORTAL_PRESETS[0])
-  const [url, setUrl] = useState('')
-  const [customerId, setCustomerId] = useState('')
-  const [maxPages, setMaxPages] = useState(3)
-  const [submitting, setSubmitting] = useState(false)
-  const [formError, setFormError] = useState<string | null>(null)
+/** 条件のサマリを短く表示 */
+function ConditionSummary({ cond }: { cond: CustomerCondition }) {
+  const parts: string[] = []
+  const isSale = cond.transaction_type !== 'rent'
 
-  const [job, setJob] = useState<CrawlJob | null>(null)
-  const [elapsed, setElapsed] = useState(0)
-  const [filter, setFilter] = useState<'all' | 'matched'>('all')
+  if (cond.area) parts.push(cond.area)
+  if (cond.property_type) parts.push(cond.property_type)
+
+  if (isSale) {
+    if (cond.budget_min || cond.budget_max) {
+      parts.push(`${cond.budget_min ?? ''}〜${cond.budget_max ?? ''}万円`)
+    }
+  } else {
+    if (cond.rent_min || cond.rent_max) {
+      parts.push(`賃料 ${cond.rent_min ?? ''}〜${cond.rent_max ?? ''}万円`)
+    }
+  }
+  if (cond.area_sqm_min || cond.area_sqm_max) {
+    parts.push(`${cond.area_sqm_min ?? ''}〜${cond.area_sqm_max ?? ''}㎡`)
+  }
+  if (cond.walk_minutes_max) parts.push(`徒歩${cond.walk_minutes_max}分以内`)
+  if (cond.building_age_max) parts.push(`築${cond.building_age_max}年以内`)
+
+  if (parts.length === 0) return <span className="text-slate-400">条件未設定</span>
+  return <span className="text-slate-600">{parts.join(' / ')}</span>
+}
+
+// -------------------------------------------------------
+// メインページ
+// -------------------------------------------------------
+export default function ManualCrawlPage() {
+  const [customers, setCustomers]     = useState<CustomerWithCondition[]>([])
+  const [customerId, setCustomerId]   = useState('')
+  const [portal, setPortal]           = useState(PORTALS[0])
+  const [maxPages, setMaxPages]       = useState(3)
+  const [showUrl, setShowUrl]         = useState(false)
+  const [submitting, setSubmitting]   = useState(false)
+  const [formError, setFormError]     = useState<string | null>(null)
+
+  const [job, setJob]                 = useState<CrawlJob | null>(null)
+  const [elapsed, setElapsed]         = useState(0)
+  const [filter, setFilter]           = useState<'all' | 'matched'>('all')
   const [proposedIds, setProposedIds] = useState<Set<string>>(new Set())
 
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollRef    = useRef<ReturnType<typeof setInterval> | null>(null)
   const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // 顧客一覧（conditions 込み）を取得
   useEffect(() => {
     fetch('/api/customers')
       .then(r => r.json())
-      .then(d => {
-        const list = Array.isArray(d) ? d : (d.customers ?? [])
+      .then((d: CustomerWithCondition[] | { customers: CustomerWithCondition[] }) => {
+        const list: CustomerWithCondition[] = Array.isArray(d) ? d : (d.customers ?? [])
         setCustomers(list)
         if (list.length > 0) setCustomerId(list[0].id)
       })
   }, [])
+
+  useEffect(() => () => {
+    if (pollRef.current)    clearInterval(pollRef.current)
+    if (elapsedRef.current) clearInterval(elapsedRef.current)
+  }, [])
+
+  // 選択中の顧客条件
+  const selectedCustomer = customers.find(c => c.id === customerId)
+  const condition        = selectedCustomer?.customer_conditions?.[0] ?? null
+
+  // 生成URL
+  const generatedUrl = condition ? buildSearchUrl(portal.key, condition) : null
 
   function startPolling(jobId: string) {
     setElapsed(0)
@@ -232,14 +289,10 @@ export default function ManualCrawlPage() {
     }, 5000)
   }
 
-  useEffect(() => () => {
-    if (pollRef.current) clearInterval(pollRef.current)
-    if (elapsedRef.current) clearInterval(elapsedRef.current)
-  }, [])
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!url.trim() || !customerId) return
+    if (!generatedUrl || !customerId) return
+
     setSubmitting(true)
     setFormError(null)
     setJob(null)
@@ -250,8 +303,8 @@ export default function ManualCrawlPage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        portalName: portalPreset.name,
-        url: url.trim(),
+        portalName: portal.name,
+        url:        generatedUrl,
         customerId,
         maxPages,
       }),
@@ -264,12 +317,11 @@ export default function ManualCrawlPage() {
       return
     }
 
-    // ジョブIDでポーリング開始
     const newJob: CrawlJob = {
       id: data.jobId,
       status: 'pending',
-      site: '',
-      portal_name: portalPreset.name,
+      site: portal.key,
+      portal_name: portal.name,
       properties_found: null,
       new_count: null,
       result: null,
@@ -282,8 +334,8 @@ export default function ManualCrawlPage() {
     startPolling(data.jobId)
   }
 
-  const isActive = job?.status === 'pending' || job?.status === 'running'
-
+  const isActive       = job?.status === 'pending' || job?.status === 'running'
+  const canSubmit      = !!generatedUrl && !!customerId && !submitting && !isActive
   const displayedProps = (job?.result?.properties ?? [])
     .filter(p => !proposedIds.has(p.propertyId ?? ''))
     .filter(p => filter === 'all' ? true : p.matchScore >= 0.5)
@@ -293,20 +345,47 @@ export default function ManualCrawlPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-800">手動探索</h1>
         <p className="text-sm text-slate-500 mt-1">
-          検索URLを貼り付けて物件を取得します。GitHub Actions経由でPlaywrightが実行されます。
+          顧客条件から検索URLを自動生成し、GitHub Actions 経由で物件を取得します。
         </p>
       </div>
 
-      {/* フォーム */}
       <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-slate-200 p-6 mb-6 space-y-5">
+
+        {/* 顧客選択 */}
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">対象顧客</label>
+          <select
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
+            value={customerId}
+            onChange={e => setCustomerId(e.target.value)}
+          >
+            {customers.map(c => (
+              <option key={c.id} value={c.id}>{c.customer_no} — {c.name}</option>
+            ))}
+          </select>
+
+          {/* 条件サマリ */}
+          {condition && (
+            <p className="text-xs mt-1.5 ml-0.5">
+              <span className="text-slate-400">希望条件: </span>
+              <ConditionSummary cond={condition} />
+            </p>
+          )}
+          {!condition && customerId && (
+            <p className="text-xs text-amber-600 mt-1.5 ml-0.5">
+              この顧客には希望条件が登録されていません。顧客詳細から条件を入力してください。
+            </p>
+          )}
+        </div>
+
         {/* ポータル選択 */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-2">ポータル</label>
           <div className="flex flex-wrap gap-2">
-            {PORTAL_PRESETS.map(p => (
-              <button key={p.name} type="button" onClick={() => setPortalPreset(p)}
+            {PORTALS.map(p => (
+              <button key={p.key} type="button" onClick={() => setPortal(p)}
                 className={`px-3 py-1.5 rounded-lg text-sm border-2 transition-colors ${
-                  portalPreset.name === p.name
+                  portal.key === p.key
                     ? 'border-slate-700 bg-slate-50 font-semibold text-slate-800'
                     : 'border-slate-200 text-slate-600 hover:border-slate-400'
                 }`}>
@@ -314,34 +393,9 @@ export default function ManualCrawlPage() {
               </button>
             ))}
           </div>
-          <p className="text-xs text-slate-400 mt-1.5">対応: {portalPreset.hint}</p>
         </div>
 
-        {/* 顧客選択 */}
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">対象顧客</label>
-          <select className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
-            value={customerId} onChange={e => setCustomerId(e.target.value)}>
-            {customers.map(c => (
-              <option key={c.id} value={c.id}>{c.customer_no} — {c.name}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* URL入力 */}
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">検索結果URL</label>
-          <input
-            type="url"
-            value={url}
-            onChange={e => setUrl(e.target.value)}
-            placeholder={`https://www.${portalPreset.hint}/...`}
-            required
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-slate-300"
-          />
-        </div>
-
-        {/* ページ数 */}
+        {/* 取得ページ数 */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-2">取得ページ数</label>
           <div className="flex gap-2">
@@ -359,15 +413,53 @@ export default function ManualCrawlPage() {
           </div>
         </div>
 
+        {/* 生成URL プレビュー（折り畳み） */}
+        {generatedUrl && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowUrl(v => !v)}
+              className="text-xs text-slate-400 hover:text-slate-600 underline underline-offset-2 transition-colors"
+            >
+              {showUrl ? '▲ 生成URLを隠す' : '▼ 生成URLを確認する'}
+            </button>
+            {showUrl && (
+              <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg p-3 flex items-start gap-2">
+                <a
+                  href={generatedUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-blue-700 hover:underline break-all font-mono flex-1"
+                >
+                  {generatedUrl}
+                </a>
+                <button
+                  type="button"
+                  onClick={() => navigator.clipboard.writeText(generatedUrl)}
+                  className="text-xs text-slate-400 hover:text-slate-700 whitespace-nowrap flex-shrink-0 border border-slate-200 rounded px-2 py-0.5 bg-white"
+                >
+                  コピー
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {formError && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700 whitespace-pre-wrap">
             {formError}
           </div>
         )}
 
-        <button type="submit" disabled={submitting || isActive || !url.trim()}
-          className="w-full bg-slate-800 text-white py-2.5 rounded-lg font-semibold hover:bg-slate-700 disabled:opacity-40 transition-colors">
-          {submitting ? '起動中...' : isActive ? '探索中（別のジョブが実行中）' : '今すぐ探索'}
+        <button
+          type="submit"
+          disabled={!canSubmit}
+          className="w-full bg-slate-800 text-white py-2.5 rounded-lg font-semibold hover:bg-slate-700 disabled:opacity-40 transition-colors"
+        >
+          {submitting  ? '起動中...' :
+           isActive    ? '探索中（実行中）' :
+           !condition  ? '条件が未登録です' :
+           '今すぐ探索'}
         </button>
       </form>
 
@@ -376,10 +468,8 @@ export default function ManualCrawlPage() {
         <div className="space-y-4">
           <JobStatusBanner job={job} elapsed={elapsed} />
 
-          {/* 結果 */}
           {job.status === 'completed' && job.result && (
             <div>
-              {/* フィルター */}
               <div className="flex gap-2 mb-4">
                 {(['all', 'matched'] as const).map(f => (
                   <button key={f} onClick={() => setFilter(f)}
