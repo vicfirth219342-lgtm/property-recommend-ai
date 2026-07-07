@@ -212,6 +212,18 @@ export default function ManualCrawlPage() {
         </p>
       </div>
 
+      {/* Vercel環境での注意 */}
+      <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 mb-6 flex gap-3">
+        <span className="text-amber-500 text-xl flex-shrink-0">⚠</span>
+        <div>
+          <p className="text-sm font-semibold text-amber-800">この機能はローカル環境専用です</p>
+          <p className="text-xs text-amber-700 mt-1">
+            Vercel（本番）環境ではPlaywrightが動作しないため、探索実行はできません。<br />
+            ローカルで <code className="bg-amber-100 px-1 rounded">npm run dev</code> を起動し、<strong>http://localhost:3003/manual-crawl</strong> から操作してください。
+          </p>
+        </div>
+      </div>
+
       {/* フォーム */}
       <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6">
         {/* ポータル選択 */}
