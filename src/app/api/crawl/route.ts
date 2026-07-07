@@ -1,18 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase'
-import { crawlSuumo } from '@/crawlers/suumo'
-import { crawlAthome } from '@/crawlers/athome'
-import { crawlHomes } from '@/crawlers/homes'
 import { buildDedupKey, buildUrlHash } from '@/lib/dedup'
 import { ScrapedProperty, SiteName, CrawlMode, CrawlOptions } from '@/types'
-
-type CrawlerFn = typeof crawlSuumo
-
-const CRAWLERS: Record<SiteName, CrawlerFn> = {
-  suumo: crawlSuumo,
-  athome: crawlAthome,
-  homes: crawlHomes,
-}
 
 // 取得件数急減の閾値
 const DROP_THRESHOLD = 0.3
@@ -64,6 +53,14 @@ export async function POST(req: NextRequest) {
 
   const results = []
   let totalNewGlobal = 0
+
+  // Playwrightを動的インポート（モジュール初期化時のVercelクラッシュを防ぐ）
+  const { crawlSuumo }  = await import('@/crawlers/suumo')
+  const { crawlAthome } = await import('@/crawlers/athome')
+  const { crawlHomes }  = await import('@/crawlers/homes')
+  const CRAWLERS: Record<SiteName, typeof crawlSuumo> = {
+    suumo: crawlSuumo, athome: crawlAthome, homes: crawlHomes,
+  }
 
   for (const su of searchUrls) {
     const site = su.site as SiteName

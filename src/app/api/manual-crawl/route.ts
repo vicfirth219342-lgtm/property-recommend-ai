@@ -1,20 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase'
-import { crawlSuumo } from '@/crawlers/suumo'
-import { crawlAthome } from '@/crawlers/athome'
-import { crawlHomes } from '@/crawlers/homes'
 import { buildDedupKey, buildUrlHash } from '@/lib/dedup'
 import {
   SiteName, ScrapedProperty, ConditionMatchItem,
   PropertyWithMatch, ManualCrawlResult, PortalType,
 } from '@/types'
-
-// 公開ポータルのみ自動クローラーあり
-const PUBLIC_CRAWLERS: Record<SiteName, typeof crawlSuumo> = {
-  suumo:  crawlSuumo,
-  athome: crawlAthome,
-  homes:  crawlHomes,
-}
 
 // URLからサイトを判別（公開ポータルのみ）
 function detectSite(url: string): SiteName | null {
@@ -166,7 +156,13 @@ export async function POST(req: NextRequest) {
     if (p.dedup_key) dedupToId.set(p.dedup_key, p.id)
   }
 
-  // クロール実行（manual-crawlは常に最大ページ上限のみ指定、自動停止なし）
+  // クロール実行（Playwrightを動的インポート — モジュール初期化時のクラッシュを防ぐ）
+  const { crawlSuumo }  = await import('@/crawlers/suumo')
+  const { crawlAthome } = await import('@/crawlers/athome')
+  const { crawlHomes }  = await import('@/crawlers/homes')
+  const PUBLIC_CRAWLERS: Record<SiteName, typeof crawlSuumo> = {
+    suumo: crawlSuumo, athome: crawlAthome, homes: crawlHomes,
+  }
   const crawler = PUBLIC_CRAWLERS[site]
   const crawlResult = await crawler(url, customerId, {
     mode: 'manual',
