@@ -12,9 +12,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'このエンドポイントはローカル環境専用です' }, { status: 503 })
   }
 
-  const auth = req.headers.get('authorization')
-  if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // GitHub Actions 上では GITHUB_ACTIONS=true が自動でセットされる
+  // localhost のサーバーに対してのみ呼ばれるため CRON_SECRET 認証をスキップ
+  const isGitHubActions = process.env.GITHUB_ACTIONS === 'true'
+  if (!isGitHubActions) {
+    const auth = req.headers.get('authorization')
+    if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
   }
 
   const body = await req.json()
