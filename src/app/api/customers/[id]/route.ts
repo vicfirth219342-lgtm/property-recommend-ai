@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase'
+import { generateAndSaveUrls } from '@/lib/urlGenerationService'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -62,6 +63,28 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     before_data: before,
     after_data: customer,
   })
+
+  // 条件が含まれている場合は検索URLを自動再生成
+  const conditionFields = [
+    'transaction_type', 'area', 'property_type',
+    'budget_min', 'budget_max', 'rent_min', 'rent_max',
+    'area_sqm_min', 'area_sqm_max', 'walk_minutes_max', 'building_age_max',
+  ]
+  const hasCondition = conditionFields.some(f => f in body)
+  if (hasCondition) {
+    const condForGen = {
+      customer_id:      id,
+      transaction_type: transaction_type ?? 'sale',
+      area, property_type,
+      budget_min, budget_max,
+      rent_min, rent_max,
+      area_sqm_min, area_sqm_max, walk_minutes_max, building_age_max,
+      other_conditions: body.other_conditions ?? null,
+    }
+    // fire-and-forget (失敗してもレスポンスには影響させない)
+    generateAndSaveUrls(id, condForGen as Parameters<typeof generateAndSaveUrls>[1], supabase)
+      .catch(err => console.error('[PATCH /customers/:id] URL generation failed:', err))
+  }
 
   return NextResponse.json(customer)
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase'
+import { generateAndSaveUrls } from '@/lib/urlGenerationService'
 
 export async function GET(req: NextRequest) {
   const supabase = createServiceClient()
@@ -64,6 +65,21 @@ export async function POST(req: NextRequest) {
     action: 'create',
     after_data: customer,
   })
+
+  // 検索URLを自動生成 (fire-and-forget)
+  if (area || property_type || budget_min || budget_max || rent_min || rent_max) {
+    const condForGen = {
+      customer_id:      customer.id,
+      transaction_type: transaction_type ?? 'sale',
+      area, property_type,
+      budget_min, budget_max,
+      rent_min, rent_max,
+      area_sqm_min, area_sqm_max, walk_minutes_max, building_age_max,
+      other_conditions: body.other_conditions ?? null,
+    }
+    generateAndSaveUrls(customer.id, condForGen as Parameters<typeof generateAndSaveUrls>[1], supabase)
+      .catch(err => console.error('[POST /customers] URL generation failed:', err))
+  }
 
   return NextResponse.json(customer, { status: 201 })
 }

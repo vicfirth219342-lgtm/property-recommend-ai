@@ -59,7 +59,11 @@ export interface CustomerSearchUrl {
   site: SiteName
   transaction_type: TransactionType
   url: string
+  url_label: string | null
   is_active: boolean
+  generated_by: 'auto' | 'manual'
+  condition_hash: string | null
+  generation_log: Record<string, unknown> | null
   last_crawled_at: string | null
   max_pages_full: number | null
   max_pages_normal: number | null

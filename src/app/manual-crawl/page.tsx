@@ -1,15 +1,11 @@
 'use client'
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { PropertyWithMatch, ConditionMatchItem, CustomerCondition } from '@/types'
-import {
-  PortalAreaMapping, SiteKey,
-  buildPortalUrl, BuildResult, resolveAreaNames, makeUrlLog,
-} from '@/lib/portalUrlBuilder'
+import { PropertyWithMatch, ConditionMatchItem, CustomerCondition, CustomerSearchUrl } from '@/types'
 
 // -------------------------------------------------------
 // 定数
 // -------------------------------------------------------
-const PORTALS: { key: SiteKey; label: string }[] = [
+const PORTALS: { key: string; label: string }[] = [
   { key: 'suumo',  label: 'SUUMO' },
   { key: 'athome', label: 'アットホーム' },
   { key: 'homes',  label: "LIFULL HOME'S" },
@@ -29,6 +25,7 @@ interface CustomerWithCondition {
   name: string
   customer_no: string
   customer_conditions: CustomerCondition[]
+  customer_search_urls: CustomerSearchUrl[]
 }
 
 type JobStatus = 'idle' | 'pending' | 'running' | 'completed' | 'failed'
@@ -206,27 +203,74 @@ function ConditionSummary({ cond }: { cond: CustomerCondition }) {
   return <span className="text-slate-600">{parts.join(' / ')}</span>
 }
 
-/** エリア照合バッジ一覧 */
-function AreaResolutionBadges({ result, mappings, portal }: {
-  result: BuildResult
-  mappings: PortalAreaMapping[]
-  portal: SiteKey
+// -------------------------------------------------------
+// URL カードコンポーネント
+// -------------------------------------------------------
+function UrlCard({
+  searchUrl,
+  selected,
+  onSelect,
+}: {
+  searchUrl: CustomerSearchUrl
+  selected: boolean
+  onSelect: () => void
 }) {
-  const cond_area = result.resolvedAreas.concat(result.unresolvedAreas)
-  if (cond_area.length === 0) return null
-
   return (
-    <div className="flex flex-wrap gap-1.5 mt-1">
-      {result.resolvedAreas.map(name => (
-        <span key={name} className="text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full">
-          ✓ {name}
-        </span>
-      ))}
-      {result.unresolvedAreas.map(name => (
-        <span key={name} className="text-xs bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">
-          ? {name}（マスター未登録）
-        </span>
-      ))}
+    <div
+      onClick={onSelect}
+      className={`rounded-lg p-3 border cursor-pointer transition-colors ${
+        selected
+          ? 'bg-slate-100 border-slate-500 ring-1 ring-slate-400'
+          : 'bg-white border-slate-200 hover:border-slate-400'
+      }`}
+    >
+      <div className="flex items-start gap-2">
+        <input type="radio" readOnly checked={selected} className="mt-0.5 flex-shrink-0 accent-slate-700" />
+        <div className="flex-1 min-w-0">
+          {searchUrl.url_label && (
+            <p className="text-xs font-medium text-slate-700 mb-0.5">{searchUrl.url_label}</p>
+          )}
+          <a
+            href={searchUrl.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            className="text-xs text-blue-700 hover:underline break-all font-mono"
+          >
+            {searchUrl.url}
+          </a>
+          <div className="flex items-center gap-2 mt-1">
+            {searchUrl.generated_by === 'auto' ? (
+              <span className="text-xs text-green-600 bg-green-50 border border-green-200 px-1.5 py-0.5 rounded-full">
+                自動生成
+              </span>
+            ) : (
+              <span className="text-xs text-slate-500 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded-full">
+                手動登録
+              </span>
+            )}
+            {searchUrl.last_crawled_at && (
+              <span className="text-xs text-slate-400">
+                最終探索: {new Date(searchUrl.last_crawled_at).toLocaleDateString('ja-JP')}
+              </span>
+            )}
+          </div>
+          {/* 未解決エリアのログ表示 */}
+          {Array.isArray(searchUrl.generation_log?.['unresolved_areas']) &&
+           (searchUrl.generation_log!['unresolved_areas'] as string[]).length > 0 && (
+            <p className="text-xs text-amber-600 mt-1">
+              ⚠ マスター未登録: {(searchUrl.generation_log!['unresolved_areas'] as string[]).join('・')}
+            </p>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(searchUrl.url) }}
+          className="text-xs text-slate-400 hover:text-slate-700 border border-slate-200 rounded px-2 py-0.5 bg-white flex-shrink-0"
+        >
+          コピー
+        </button>
+      </div>
     </div>
   )
 }
@@ -235,67 +279,69 @@ function AreaResolutionBadges({ result, mappings, portal }: {
 // メインページ
 // -------------------------------------------------------
 export default function ManualCrawlPage() {
-  const [customers, setCustomers]     = useState<CustomerWithCondition[]>([])
-  const [mappings, setMappings]       = useState<PortalAreaMapping[]>([])
-  const [loadingMaps, setLoadingMaps] = useState(true)
+  const [customers, setCustomers]   = useState<CustomerWithCondition[]>([])
+  const [loading, setLoading]       = useState(true)
 
-  const [customerId, setCustomerId]   = useState('')
-  const [portal, setPortal]           = useState<SiteKey>('suumo')
-  const [maxPages, setMaxPages]       = useState(3)
-  const [showUrls, setShowUrls]       = useState(false)
-  const [manualMode, setManualMode]   = useState(false)
-  const [manualUrl, setManualUrl]     = useState('')
+  const [customerId, setCustomerId] = useState('')
+  const [portal, setPortal]         = useState('suumo')
+  const [maxPages, setMaxPages]     = useState(3)
+  const [selectedUrlId, setSelectedUrlId] = useState<string | null>(null)
+  const [manualMode, setManualMode] = useState(false)
+  const [manualUrl, setManualUrl]   = useState('')
+  const [showUrlPanel, setShowUrlPanel] = useState(false)
 
-  const [submitting, setSubmitting]   = useState(false)
-  const [formError, setFormError]     = useState<string | null>(null)
-  const [submitUrlIdx, setSubmitUrlIdx] = useState(0)  // 複数URLの場合どれを使うか
+  const [regenerating, setRegenerating] = useState(false)
+  const [regenResult, setRegenResult]   = useState<string | null>(null)
 
-  const [job, setJob]                 = useState<CrawlJob | null>(null)
-  const [elapsed, setElapsed]         = useState(0)
-  const [filter, setFilter]           = useState<'all' | 'matched'>('all')
+  const [submitting, setSubmitting] = useState(false)
+  const [formError, setFormError]   = useState<string | null>(null)
+
+  const [job, setJob]               = useState<CrawlJob | null>(null)
+  const [elapsed, setElapsed]       = useState(0)
+  const [filter, setFilter]         = useState<'all' | 'matched'>('all')
   const [proposedIds, setProposedIds] = useState<Set<string>>(new Set())
 
   const pollRef    = useRef<ReturnType<typeof setInterval> | null>(null)
   const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // マスターデータ + 顧客一覧を並行取得
-  useEffect(() => {
-    Promise.all([
-      fetch('/api/customers').then(r => r.json()),
-      fetch('/api/area-mappings').then(r => r.json()),
-    ]).then(([cust, maps]) => {
-      const list: CustomerWithCondition[] = Array.isArray(cust) ? cust : (cust.customers ?? [])
-      setCustomers(list)
-      if (list.length > 0) setCustomerId(list[0].id)
-      setMappings(Array.isArray(maps) ? maps : [])
-      setLoadingMaps(false)
-    })
-  }, [])
+  // 顧客一覧取得 (customer_search_urls を含む)
+  const fetchCustomers = useCallback(async () => {
+    const res = await fetch('/api/customers')
+    const data = await res.json()
+    const list: CustomerWithCondition[] = Array.isArray(data) ? data : (data.customers ?? [])
+    setCustomers(list)
+    if (list.length > 0 && !customerId) setCustomerId(list[0].id)
+    setLoading(false)
+  }, [customerId])
+
+  useEffect(() => { fetchCustomers() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => () => {
     if (pollRef.current)    clearInterval(pollRef.current)
     if (elapsedRef.current) clearInterval(elapsedRef.current)
   }, [])
 
-  // 選択中顧客と条件
+  // 選択中顧客
   const selectedCustomer = customers.find(c => c.id === customerId)
   const condition        = selectedCustomer?.customer_conditions?.[0] ?? null
 
-  // URL 生成
-  const buildResult: BuildResult | null = condition && !loadingMaps
-    ? buildPortalUrl(portal, condition, mappings)
-    : null
+  // 選択ポータルの保存済み URL
+  const portalUrls = (selectedCustomer?.customer_search_urls ?? []).filter(
+    u => u.site === portal && u.is_active
+  )
 
-  // 送信に使うURL
-  const activeUrl = manualMode
-    ? manualUrl.trim()
-    : buildResult?.urls[submitUrlIdx]?.url ?? null
+  // 選択 URL
+  const selectedUrl = portalUrls.find(u => u.id === selectedUrlId) ?? portalUrls[0] ?? null
 
-  // 顧客が変わったら手動モード解除
+  // 実際に送信する URL
+  const activeUrl = manualMode ? manualUrl.trim() : selectedUrl?.url ?? null
+
+  // ポータルまたは顧客が変わったら URL 選択をリセット
   useEffect(() => {
+    setSelectedUrlId(null)
     setManualMode(false)
     setManualUrl('')
-    setSubmitUrlIdx(0)
+    setRegenResult(null)
   }, [customerId, portal])
 
   function startPolling(jobId: string) {
@@ -313,14 +359,38 @@ export default function ManualCrawlPage() {
     }, 5000)
   }
 
+  // URL 再生成
+  async function handleRegenerate() {
+    if (!customerId) return
+    setRegenerating(true)
+    setRegenResult(null)
+    try {
+      const res = await fetch(`/api/customers/${customerId}/regenerate-urls`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) {
+        setRegenResult(`エラー: ${data.error ?? '再生成に失敗しました'}`)
+        return
+      }
+      // 顧客データを再取得して URL を更新
+      await fetchCustomers()
+      const summaries: Array<{ portal: string; urlCount: number; canGenerate: boolean; unresolvedAreas: string[] }>
+        = data.summaries ?? []
+      const unresolved = summaries.flatMap(s => s.unresolvedAreas)
+      if (unresolved.length > 0) {
+        setRegenResult(`再生成完了。未解決エリア: ${unresolved.join('・')}（portal_area_mappings への追加が必要）`)
+      } else {
+        setRegenResult(`再生成完了。`)
+      }
+    } catch {
+      setRegenResult('再生成中にエラーが発生しました。')
+    } finally {
+      setRegenerating(false)
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!activeUrl || !customerId) return
-
-    // 0件判別ログを console に記録（デバッグ用）
-    if (buildResult && !manualMode) {
-      console.info('[manual-crawl] URL生成ログ:', makeUrlLog(portal, buildResult, condition!))
-    }
 
     setSubmitting(true)
     setFormError(null)
@@ -358,30 +428,43 @@ export default function ManualCrawlPage() {
     startPolling(data.jobId)
   }
 
-  const isActive       = job?.status === 'pending' || job?.status === 'running'
-  const canSubmit      = !!activeUrl && !!customerId && !submitting && !isActive
+  const isActive  = job?.status === 'pending' || job?.status === 'running'
+  const canSubmit = !!activeUrl && !!customerId && !submitting && !isActive
+
   const displayedProps = (job?.result?.properties ?? [])
     .filter(p => !proposedIds.has(p.propertyId ?? ''))
     .filter(p => filter === 'all' ? true : p.matchScore >= 0.5)
+
+  if (loading) {
+    return (
+      <div className="p-6 max-w-5xl mx-auto">
+        <div className="flex items-center gap-3 text-slate-500">
+          <div className="w-4 h-4 border-2 border-slate-300 border-t-transparent rounded-full animate-spin" />
+          <span className="text-sm">読み込み中...</span>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-800">手動探索</h1>
         <p className="text-sm text-slate-500 mt-1">
-          顧客条件とポータルエリアマスターから検索URLを自動生成し、GitHub Actions 経由で物件を取得します。
+          顧客を選択してポータルを指定し、「今すぐ探索」を押すだけで物件を取得します。
+          検索URLは顧客条件の保存時に自動生成されます。
         </p>
       </div>
 
       <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-slate-200 p-6 mb-6 space-y-5">
 
-        {/* 顧客選択 */}
+        {/* ---- 顧客選択 ---- */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">対象顧客</label>
           <select
             className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
             value={customerId}
-            onChange={e => setCustomerId(e.target.value)}
+            onChange={e => { setCustomerId(e.target.value); setJob(null) }}
           >
             {customers.map(c => (
               <option key={c.id} value={c.id}>{c.customer_no} — {c.name}</option>
@@ -400,24 +483,95 @@ export default function ManualCrawlPage() {
           ) : null}
         </div>
 
-        {/* ポータル選択 */}
+        {/* ---- ポータル選択 ---- */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-2">ポータル</label>
           <div className="flex flex-wrap gap-2">
-            {PORTALS.map(p => (
-              <button key={p.key} type="button" onClick={() => setPortal(p.key)}
-                className={`px-3 py-1.5 rounded-lg text-sm border-2 transition-colors ${
-                  portal === p.key
-                    ? 'border-slate-700 bg-slate-50 font-semibold text-slate-800'
-                    : 'border-slate-200 text-slate-600 hover:border-slate-400'
-                }`}>
-                {p.label}
-              </button>
-            ))}
+            {PORTALS.map(p => {
+              const urls = (selectedCustomer?.customer_search_urls ?? []).filter(
+                u => u.site === p.key && u.is_active
+              )
+              const hasUrl = urls.length > 0
+              return (
+                <button
+                  key={p.key}
+                  type="button"
+                  onClick={() => setPortal(p.key)}
+                  className={`px-3 py-1.5 rounded-lg text-sm border-2 transition-colors relative ${
+                    portal === p.key
+                      ? 'border-slate-700 bg-slate-50 font-semibold text-slate-800'
+                      : 'border-slate-200 text-slate-600 hover:border-slate-400'
+                  }`}
+                >
+                  {p.label}
+                  {hasUrl ? (
+                    <span className="ml-1.5 text-xs text-green-600 font-normal">✓</span>
+                  ) : (
+                    <span className="ml-1.5 text-xs text-slate-400 font-normal">—</span>
+                  )}
+                </button>
+              )
+            })}
           </div>
         </div>
 
-        {/* 取得ページ数 */}
+        {/* ---- URL セクション ---- */}
+        {!manualMode && (
+          <div className="space-y-2">
+            {portalUrls.length === 0 ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <p className="text-sm font-semibold text-amber-800">
+                  {PORTALS.find(p => p.key === portal)?.label} の検索URLが未生成です
+                </p>
+                <p className="text-xs text-amber-700 mt-1">
+                  「URLを再生成」ボタンを押すか、顧客条件を保存すると自動生成されます。<br />
+                  エリアがマスターに未登録の場合は「手動でURLを入力」をご利用ください。
+                </p>
+              </div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowUrlPanel(v => !v)}
+                  className="text-xs text-slate-400 hover:text-slate-600 underline underline-offset-2 transition-colors"
+                >
+                  {showUrlPanel ? '▲ URLを隠す' : '▼ 検索URLを確認する'}
+                </button>
+                {showUrlPanel && (
+                  <div className="space-y-2">
+                    {portalUrls.map(u => (
+                      <UrlCard
+                        key={u.id}
+                        searchUrl={u}
+                        selected={selectedUrl?.id === u.id}
+                        onSelect={() => setSelectedUrlId(u.id)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* URL再生成 */}
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                type="button"
+                onClick={handleRegenerate}
+                disabled={regenerating || !condition}
+                className="text-xs bg-white text-slate-600 border border-slate-300 px-3 py-1.5 rounded-lg hover:bg-slate-50 hover:border-slate-400 disabled:opacity-40 transition-colors font-medium"
+              >
+                {regenerating ? '再生成中...' : 'URLを再生成'}
+              </button>
+              {regenResult && (
+                <p className={`text-xs ${regenResult.startsWith('エラー') ? 'text-red-600' : 'text-slate-500'}`}>
+                  {regenResult}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ---- 取得ページ数 ---- */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-2">取得ページ数</label>
           <div className="flex gap-2">
@@ -435,88 +589,11 @@ export default function ManualCrawlPage() {
           </div>
         </div>
 
-        {/* ---- 生成URL セクション ---- */}
-        {!manualMode && buildResult && (
-          <div className="space-y-2">
-
-            {/* エリア照合結果 */}
-            {condition?.area && (
-              <AreaResolutionBadges result={buildResult} mappings={mappings} portal={portal} />
-            )}
-
-            {/* 警告 */}
-            {buildResult.warnings.map((w, i) => (
-              <p key={i} className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
-                ⚠ {w}
-              </p>
-            ))}
-
-            {/* 要確認 */}
-            {!buildResult.canGenerate && (
-              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
-                <p className="text-sm font-semibold text-orange-800">要確認: URLを自動生成できませんでした</p>
-                <p className="text-xs text-orange-700 mt-1">
-                  エリア「{buildResult.unresolvedAreas.join('・')}」がマスターに未登録です。<br />
-                  下の「手動でURLを入力」から検索URLを貼り付けて実行してください。<br />
-                  管理者はSupabase の <code className="bg-orange-100 px-1 rounded">portal_area_mappings</code> テーブルにエントリを追加することで解決します。
-                </p>
-              </div>
-            )}
-
-            {/* 生成URL表示（折り畳み） */}
-            {buildResult.canGenerate && (
-              <>
-                <button type="button" onClick={() => setShowUrls(v => !v)}
-                  className="text-xs text-slate-400 hover:text-slate-600 underline underline-offset-2 transition-colors">
-                  {showUrls ? '▲ 生成URLを隠す' : '▼ 生成URLを確認する'}
-                </button>
-
-                {showUrls && (
-                  <div className="space-y-2">
-                    {buildResult.urls.map((u, i) => (
-                      <div key={i}
-                        className={`rounded-lg p-3 border flex items-start gap-2 cursor-pointer transition-colors ${
-                          submitUrlIdx === i
-                            ? 'bg-slate-100 border-slate-400'
-                            : 'bg-slate-50 border-slate-200 hover:border-slate-400'
-                        }`}
-                        onClick={() => setSubmitUrlIdx(i)}
-                      >
-                        {buildResult.urls.length > 1 && (
-                          <input type="radio" readOnly checked={submitUrlIdx === i}
-                            className="mt-0.5 flex-shrink-0 accent-slate-700" />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium text-slate-700 mb-0.5">{u.label}</p>
-                          <a href={u.url} target="_blank" rel="noopener noreferrer"
-                             className="text-xs text-blue-700 hover:underline break-all font-mono">
-                            {u.url}
-                          </a>
-                        </div>
-                        <button type="button"
-                          onClick={ev => { ev.stopPropagation(); navigator.clipboard.writeText(u.url) }}
-                          className="text-xs text-slate-400 hover:text-slate-700 border border-slate-200 rounded px-2 py-0.5 bg-white flex-shrink-0">
-                          コピー
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        )}
-
-        {/* マスターロード中 */}
-        {loadingMaps && (
-          <p className="text-xs text-slate-400">エリアマスターを読み込み中...</p>
-        )}
-
-        {/* 手動URLフォールバック */}
+        {/* ---- 手動URLフォールバック ---- */}
         <div>
           <button type="button" onClick={() => setManualMode(v => !v)}
             className="text-xs text-slate-400 hover:text-slate-600 underline underline-offset-2 transition-colors">
-            {manualMode ? '▲ 自動生成に戻す' : '▼ 手動でURLを入力する（フォールバック）'}
+            {manualMode ? '▲ 自動生成URLに戻す' : '▼ 手動でURLを入力する（フォールバック）'}
           </button>
 
           {manualMode && (
@@ -525,7 +602,7 @@ export default function ManualCrawlPage() {
                 type="url"
                 value={manualUrl}
                 onChange={e => setManualUrl(e.target.value)}
-                placeholder={`https://suumo.jp/jj/bukken/ichiran/...`}
+                placeholder="https://suumo.jp/jj/bukken/ichiran/..."
                 className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-slate-300"
               />
               <p className="text-xs text-slate-400">
@@ -541,35 +618,36 @@ export default function ManualCrawlPage() {
           </div>
         )}
 
-        <button type="submit" disabled={!canSubmit}
-          className="w-full bg-slate-800 text-white py-2.5 rounded-lg font-semibold hover:bg-slate-700 disabled:opacity-40 transition-colors">
+        <button
+          type="submit"
+          disabled={!canSubmit}
+          className="w-full bg-slate-800 text-white py-2.5 rounded-lg font-semibold hover:bg-slate-700 disabled:opacity-40 transition-colors"
+        >
           {submitting ? '起動中...' :
            isActive   ? '探索中（実行中）' :
            !condition && !manualMode ? '条件が未登録です' :
-           manualMode && !manualUrl ? 'URLを入力してください' :
-           !buildResult?.canGenerate && !manualMode ? 'URLを手動で入力してください' :
+           !activeUrl ? 'URLを生成または手動入力してください' :
            '今すぐ探索'}
         </button>
       </form>
 
-      {/* ジョブ状態 */}
+      {/* ---- ジョブ状態 ---- */}
       {job && (
         <div className="space-y-4">
           <JobStatusBanner job={job} elapsed={elapsed} />
 
           {job.status === 'completed' && job.result && (
             <div>
-              {/* 0件の場合の診断ヒント */}
               {job.properties_found === 0 && (
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4 text-sm text-slate-600">
                   <p className="font-semibold mb-1">物件が0件でした。考えられる原因:</p>
                   <ul className="list-disc list-inside space-y-1 text-xs">
                     <li>検索条件が厳しすぎる（価格・面積・徒歩分の範囲を広げてみてください）</li>
-                    <li>URL生成のエリアコードが誤っている可能性（「生成URLを確認する」でブラウザで開いて確認）</li>
-                    <li>ポータルのHTML構造が変更された（クローラー側の問題、エンジニアへ連絡）</li>
+                    <li>URLのエリアコードが未解決（「検索URLを確認する」で開いてブラウザで確認）</li>
+                    <li>ポータルのHTML構造が変更された（クローラー側の問題）</li>
                   </ul>
                   <p className="mt-2 text-xs text-slate-400">
-                    ブラウザコンソールに詳細なURL生成ログが記録されています（F12 → Console）。
+                    generation_log に詳細な診断情報が記録されています（Supabase で確認可能）。
                   </p>
                 </div>
               )}
