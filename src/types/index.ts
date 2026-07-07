@@ -1,6 +1,14 @@
 export type CustomerRank = 'A' | 'B' | 'C'
 export type CustomerStatus = 'active' | 'inactive'
 export type SiteName = 'suumo' | 'athome' | 'homes'
+export type PortalType = 'public' | 'login'
+
+export interface PortalPreset {
+  name: string
+  type: PortalType
+  domain: string
+  site?: SiteName   // public portals のみ
+}
 export type CrawlStatus = 'success' | 'failure' | 'partial'
 
 export interface Customer {
@@ -39,6 +47,10 @@ export interface CustomerSearchUrl {
   site: SiteName
   url: string
   is_active: boolean
+  last_crawled_at: string | null
+  max_pages_full: number | null
+  max_pages_normal: number | null
+  max_pages_manual: number | null
   created_at: string
   updated_at: string
 }
@@ -53,12 +65,18 @@ export interface Property {
   area_sqm: number | null
   floor_plan: string | null
   building_age: number | null
+  built_year: number | null
+  built_month: number | null
   walk_minutes: number | null
   url: string
   thumbnail_url: string | null
   room_number: string | null
   raw_hash: string | null
   dedup_key: string | null
+  first_seen_at: string | null
+  last_seen_at: string | null
+  last_price: number | null
+  current_price: number | null
   fetched_at: string
   created_at: string
 }
@@ -98,7 +116,12 @@ export interface ScrapedProperty {
   price: number | null
   area_sqm: number | null
   floor_plan: string | null
+  /** 一覧テキストから計算済みの築年数（保存用）。パーサー経由で設定 */
   building_age: number | null
+  /** 竣工年（西暦） */
+  built_year: number | null
+  /** 竣工月（1〜12） */
+  built_month: number | null
   walk_minutes: number | null
   url: string
   thumbnail_url: string | null
@@ -115,7 +138,8 @@ export type StoppedReason =
   | 'no_results'
 
 export interface PageCrawlResult {
-  properties: ScrapedProperty[]
+  properties: ScrapedProperty[]       // 新規物件（DB挿入対象）
+  seenProperties: ScrapedProperty[]   // 既知物件（last_seen_at・価格更新対象）
   totalCount: number | null
   totalPages: number | null
   checkedPages: number
@@ -123,12 +147,43 @@ export interface PageCrawlResult {
   newCount: number
   duplicateCount: number
   stoppedReason: StoppedReason
+  isInitialCrawl?: boolean
   error?: string
   htmlPath?: string
 }
 
+export interface ConditionMatchItem {
+  label: string
+  required: string
+  actual: string | null
+  match: 'ok' | 'ng' | 'unknown'
+}
+
+export interface PropertyWithMatch extends ScrapedProperty {
+  propertyId?: string          // DB保存後のID（提案登録に使用）
+  isNew: boolean
+  isDuplicate: boolean
+  matchScore: number           // 0.0〜1.0
+  matchItems: ConditionMatchItem[]
+}
+
+export interface ManualCrawlResult {
+  site: string                 // 検出されたサイト名
+  portalName: string
+  portalType: PortalType
+  totalCount: number | null
+  totalPages: number | null
+  checkedPages: number
+  fetchedCount: number
+  newCount: number
+  duplicateCount: number
+  stoppedReason: string
+  properties: PropertyWithMatch[]
+  error?: string
+}
+
 export interface CrawlOptions {
   mode: CrawlMode
-  maxPages?: number          // 明示的に上限指定（modeより優先）
-  stopOnDuplicatePages?: number  // 差分モード: N ページ連続重複で停止（デフォルト2）
+  maxPages?: number           // 明示的上限（mode より優先）
+  stopOnDuplicateCount?: number  // diff: N件連続重複で停止（デフォルト20）
 }

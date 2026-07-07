@@ -41,10 +41,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: '対象URLなし', crawled: 0, results: [] })
   }
 
-  // 既存のdedupKeyを一括取得（重複判定用）
+  // 既存の dedup_key を一括取得（重複判定用）
   const { data: existingProps } = await supabase
     .from('properties')
-    .select('dedup_key, raw_hash')
+    .select('dedup_key')
   const knownDedupKeys = new Set<string>(existingProps?.map(p => p.dedup_key).filter(Boolean) ?? [])
 
   const results = []
@@ -55,10 +55,15 @@ export async function POST(req: NextRequest) {
     const crawler = CRAWLERS[site]
     const startedAt = new Date()
 
+    // 初回探索の自動判定: last_crawled_at が null → full モードで全件取得
+    const isInitialCrawl = su.last_crawled_at === null
+    const effectiveMode: CrawlMode = isInitialCrawl ? 'full' : mode
+
     // ページ上限: URL設定 → リクエスト引数 → モードデフォルト の優先順
     const options: CrawlOptions = {
-      mode,
-      maxPages: max_pages ?? resolveUrlMaxPages(su, mode),
+      mode: effectiveMode,
+      maxPages: max_pages ?? resolveUrlMaxPages(su, effectiveMode),
+      stopOnDuplicateCount: 20, // 連続20件重複で停止
     }
 
     try {
@@ -66,7 +71,7 @@ export async function POST(req: NextRequest) {
       const finishedAt = new Date()
       const duration = finishedAt.getTime() - startedAt.getTime()
 
-      // 急減チェック
+      // 急減チェック（前回ログと比較）
       const { data: lastLog } = await supabase
         .from('crawl_logs')
         .select('properties_found')
@@ -77,25 +82,26 @@ export async function POST(req: NextRequest) {
         .limit(1)
         .single()
 
+      // properties_found = ページ上で見つかった総件数（新規 + 重複）
+      const pageTotal = crawlResult.fetchedCount + crawlResult.duplicateCount
       const prevCount = lastLog?.properties_found ?? 0
       const dropWarning =
-        prevCount > 5 && crawlResult.fetchedCount < prevCount * DROP_THRESHOLD
-          ? `⚠ 取得件数急減: 前回${prevCount}件 → 今回${crawlResult.fetchedCount}件`
+        prevCount > 5 && pageTotal < prevCount * DROP_THRESHOLD
+          ? `⚠ 取得件数急減: 前回${prevCount}件 → 今回${pageTotal}件`
           : null
 
-      // クロールログ保存（新カラム含む）
+      // クロールログ保存
       await supabase.from('crawl_logs').insert({
         customer_id: su.customer_id,
         site,
         url: su.url,
         status: crawlResult.error ? 'failure' : 'success',
-        properties_found: crawlResult.fetchedCount,
+        properties_found: pageTotal,
         error_message: crawlResult.error ?? dropWarning,
         html_snapshot: crawlResult.htmlPath,
         started_at: startedAt.toISOString(),
         finished_at: finishedAt.toISOString(),
         duration_ms: duration,
-        // 新カラム
         total_count: crawlResult.totalCount,
         total_pages: crawlResult.totalPages,
         checked_pages: crawlResult.checkedPages,
@@ -103,7 +109,7 @@ export async function POST(req: NextRequest) {
         new_count: crawlResult.newCount,
         duplicate_count: crawlResult.duplicateCount,
         stopped_reason: crawlResult.stoppedReason,
-        crawl_mode: mode,
+        crawl_mode: effectiveMode,
       })
 
       // 3日連続失敗チェック
@@ -121,11 +127,16 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // 物件をDBに保存（新規のみ）
+      // 新規物件をDBに保存
       let savedNew = 0
       if (crawlResult.properties.length > 0) {
         savedNew = await saveProperties(supabase, crawlResult.properties, knownDedupKeys)
         totalNewGlobal += savedNew
+      }
+
+      // 既知物件の last_seen_at・価格変動を更新
+      if (crawlResult.seenProperties.length > 0) {
+        await updateSeenProperties(supabase, crawlResult.seenProperties)
       }
 
       // last_crawled_at 更新
@@ -136,7 +147,8 @@ export async function POST(req: NextRequest) {
       results.push({
         customer_id: su.customer_id,
         site,
-        mode,
+        mode: effectiveMode,
+        isInitialCrawl,
         totalCount: crawlResult.totalCount,
         totalPages: crawlResult.totalPages,
         checkedPages: crawlResult.checkedPages,
@@ -162,7 +174,7 @@ export async function POST(req: NextRequest) {
         started_at: startedAt.toISOString(),
         finished_at: new Date().toISOString(),
         stopped_reason: 'fetch_error',
-        crawl_mode: mode,
+        crawl_mode: effectiveMode ?? mode,
       })
       results.push({ customer_id: su.customer_id, site, error: message, stoppedReason: 'fetch_error' })
     }
@@ -185,16 +197,18 @@ function resolveUrlMaxPages(
     case 'full':   return su.max_pages_full ?? undefined
     case 'manual': return su.max_pages_manual ?? 10
     case 'debug':  return 1
-    default:       return su.max_pages_normal ?? 3
+    default:       return su.max_pages_normal ?? 3  // diff = 毎朝3ページ
   }
 }
 
+// 新規物件を挿入
 async function saveProperties(
   supabase: ReturnType<typeof createServiceClient>,
   properties: ScrapedProperty[],
   knownDedupKeys: Set<string>
 ): Promise<number> {
   let newCount = 0
+  const now = new Date().toISOString()
 
   for (const prop of properties) {
     const dedupKey = buildDedupKey(prop)
@@ -212,12 +226,17 @@ async function saveProperties(
         area_sqm: prop.area_sqm,
         floor_plan: prop.floor_plan,
         building_age: prop.building_age,
+        built_year: prop.built_year ?? null,
+        built_month: prop.built_month ?? null,
         walk_minutes: prop.walk_minutes,
         url: prop.url,
         thumbnail_url: prop.thumbnail_url,
         room_number: prop.room_number,
         dedup_key: dedupKey,
         raw_hash: rawHash,
+        first_seen_at: now,
+        last_seen_at: now,
+        current_price: prop.price,
       })
       .select('id')
       .single()
@@ -229,6 +248,58 @@ async function saveProperties(
   }
 
   return newCount
+}
+
+// 既知物件の last_seen_at を更新し、価格変動を記録
+async function updateSeenProperties(
+  supabase: ReturnType<typeof createServiceClient>,
+  props: ScrapedProperty[]
+): Promise<void> {
+  if (props.length === 0) return
+  const now = new Date().toISOString()
+
+  const dedupKeys = props.map(p => buildDedupKey(p))
+
+  // 一括で既存レコードを取得
+  const { data: existing } = await supabase
+    .from('properties')
+    .select('id, dedup_key, current_price, built_year')
+    .in('dedup_key', dedupKeys)
+
+  if (!existing || existing.length === 0) return
+
+  // dedup_key → DB レコード のマップ
+  const existingMap = new Map(existing.map(e => [e.dedup_key, e]))
+
+  // 一括で last_seen_at を更新
+  await supabase
+    .from('properties')
+    .update({ last_seen_at: now })
+    .in('dedup_key', dedupKeys)
+
+  // 価格変動・築年月が更新された物件を個別更新
+  for (const prop of props) {
+    const key = buildDedupKey(prop)
+    const ex = existingMap.get(key)
+    if (!ex) continue
+
+    const updates: Record<string, unknown> = {}
+
+    if (prop.price !== null && ex.current_price !== prop.price) {
+      updates.last_price = ex.current_price
+      updates.current_price = prop.price
+    }
+    // 再クロール時に築年月を更新（より正確なデータで上書き）
+    if (prop.built_year !== null && prop.built_year !== undefined) {
+      updates.built_year = prop.built_year
+      updates.built_month = prop.built_month ?? null
+      updates.building_age = prop.building_age ?? null
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await supabase.from('properties').update(updates).eq('id', ex.id)
+    }
+  }
 }
 
 function sleep(ms: number) {

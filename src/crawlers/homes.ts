@@ -1,11 +1,21 @@
 import { chromium } from 'playwright'
 import { ScrapedProperty, CrawlOptions, PageCrawlResult, StoppedReason } from '@/types'
 import { buildDedupKey } from '@/lib/dedup'
+import { parseBuiltDate } from '@/lib/parseBuiltDate'
 import path from 'path'
 import fs from 'fs'
 
 const SNAPSHOT_DIR = path.join(process.cwd(), 'crawl-snapshots')
 const PAGE_SIZE = 30
+
+// 新着順ソートを付与（既に sort パラメータがある場合はスキップ）
+function addNewestFirstSort(baseUrl: string): string {
+  const url = new URL(baseUrl)
+  if (!url.searchParams.has('sort')) {
+    url.searchParams.set('sort', 'new_order') // LIFULL HOME'S: sort=new_order = 新着順
+  }
+  return url.toString()
+}
 
 // LIFULL HOME'S はURLパラメータで page=N
 function buildPageUrl(baseUrl: string, page: number): string {
@@ -65,16 +75,22 @@ async function scrapeOnePage(page: import('playwright').Page): Promise<ScrapedPr
       const area_sqm = areaMatch ? parseFloat(areaMatch[1]) : null
       const floorMatch = allText.match(/([1-9][SLDK]+)/i)
       const floor_plan = floorMatch ? floorMatch[1].toUpperCase() : null
-      const ageMatch = allText.match(/築(\d+)年/)
-      const building_age = ageMatch ? parseInt(ageMatch[1]) : null
       const walkMatch = allText.match(/徒歩(\d+)分/)
       const walk_minutes = walkMatch ? parseInt(walkMatch[1]) : null
       const thumbnail = await item.$eval('img', (el) => (el as HTMLImageElement).src).catch(() => null)
       const roomMatch = name.match(/(\d+)号室?$/) ?? allText.match(/(\d{3,4})号室/)
       const room_number = roomMatch ? roomMatch[1] : null
 
+      const builtRaw =
+        allText.match(/(新築|築後未入居|(?:明治|大正|昭和|平成|令和)\d+年(?:\d+月)?|\d{4}年(?:\d+月)?|築\d+年)/)?.[0] ?? ''
+      const { builtYear, builtMonth, buildingAge } = parseBuiltDate(builtRaw)
+
       if (!name || !url) continue
-      properties.push({ site: 'homes', name, address, price, area_sqm, floor_plan, building_age, walk_minutes, url, thumbnail_url: thumbnail ?? null, room_number })
+      properties.push({
+        site: 'homes', name, address, price, area_sqm, floor_plan,
+        building_age: buildingAge, built_year: builtYear, built_month: builtMonth,
+        walk_minutes, url, thumbnail_url: thumbnail ?? null, room_number,
+      })
     } catch {}
   }
   return properties
@@ -86,6 +102,8 @@ export async function crawlHomes(
   options: CrawlOptions,
   knownDedupKeys: Set<string>
 ): Promise<PageCrawlResult> {
+  const sortedUrl = addNewestFirstSort(baseUrl)
+
   const browser = await chromium.launch({ headless: true })
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -94,6 +112,7 @@ export async function crawlHomes(
   const page = await context.newPage()
 
   const allProperties: ScrapedProperty[] = []
+  const seenKeyMap = new Map<string, ScrapedProperty>()
   let totalCount: number | null = null
   let totalPages: number | null = null
   let checkedPages = 0
@@ -101,20 +120,21 @@ export async function crawlHomes(
   let duplicateCount = 0
   let stoppedReason: StoppedReason = 'reached_last_page'
   let htmlPath: string | undefined
-  let consecutiveDupPages = 0
-  const stopOnDupPages = options.stopOnDuplicatePages ?? 2
+  let consecutiveDups = 0
+  const stopOnDups = options.stopOnDuplicateCount ?? 20
   const maxPages = resolveMaxPages(options)
 
   try {
     let currentPage = 1
+    let earlyStop = false
 
-    while (true) {
+    while (!earlyStop) {
       if (maxPages !== null && currentPage > maxPages) {
         stoppedReason = 'reached_page_limit'
         break
       }
 
-      const pageUrl = buildPageUrl(baseUrl, currentPage)
+      const pageUrl = buildPageUrl(sortedUrl, currentPage)
       await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 })
       await page.waitForTimeout(2000 + Math.random() * 1000)
 
@@ -137,27 +157,30 @@ export async function crawlHomes(
         break
       }
 
-      let newInPage = 0
       for (const prop of pageProps) {
         const key = buildDedupKey(prop)
+
         if (knownDedupKeys.has(key)) {
           duplicateCount++
+          seenKeyMap.set(key, prop)
+
+          if (options.mode === 'diff' || options.mode === 'manual') {
+            consecutiveDups++
+            if (consecutiveDups >= stopOnDups) {
+              stoppedReason = 'duplicate_sequence_detected'
+              earlyStop = true
+              break
+            }
+          }
         } else {
-          newInPage++
+          consecutiveDups = 0
           fetchedCount++
           allProperties.push(prop)
+          knownDedupKeys.add(key)
         }
       }
 
-      if (options.mode === 'diff' && newInPage === 0) {
-        consecutiveDupPages++
-        if (consecutiveDupPages >= stopOnDupPages) {
-          stoppedReason = 'duplicate_sequence_detected'
-          break
-        }
-      } else {
-        consecutiveDupPages = 0
-      }
+      if (earlyStop) break
 
       if (currentPage >= (totalPages ?? 999)) {
         stoppedReason = 'reached_last_page'
@@ -168,7 +191,18 @@ export async function crawlHomes(
       currentPage++
     }
 
-    return { properties: allProperties, totalCount, totalPages, checkedPages, fetchedCount, newCount: fetchedCount, duplicateCount, stoppedReason, htmlPath }
+    return {
+      properties: allProperties,
+      seenProperties: Array.from(seenKeyMap.values()),
+      totalCount,
+      totalPages,
+      checkedPages,
+      fetchedCount,
+      newCount: fetchedCount,
+      duplicateCount,
+      stoppedReason,
+      htmlPath,
+    }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
     try {
@@ -177,7 +211,19 @@ export async function crawlHomes(
       if (!fs.existsSync(SNAPSHOT_DIR)) fs.mkdirSync(SNAPSHOT_DIR, { recursive: true })
       fs.writeFileSync(htmlPath, await page.content(), 'utf-8')
     } catch {}
-    return { properties: allProperties, totalCount, totalPages, checkedPages, fetchedCount, newCount: fetchedCount, duplicateCount, stoppedReason: 'fetch_error', error: message, htmlPath }
+    return {
+      properties: allProperties,
+      seenProperties: Array.from(seenKeyMap.values()),
+      totalCount,
+      totalPages,
+      checkedPages,
+      fetchedCount,
+      newCount: fetchedCount,
+      duplicateCount,
+      stoppedReason: 'fetch_error',
+      error: message,
+      htmlPath,
+    }
   } finally {
     await browser.close()
   }

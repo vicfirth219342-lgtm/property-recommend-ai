@@ -136,19 +136,19 @@ export default function CustomersPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="text-left px-4 py-3 font-medium text-slate-500 whitespace-nowrap w-24">No</th>
-                <th className="text-left px-4 py-3 font-medium text-slate-500 whitespace-nowrap">顧客名</th>
-                <th className="text-left px-4 py-3 font-medium text-slate-500 whitespace-nowrap w-20">ランク</th>
-                <th className="text-left px-4 py-3 font-medium text-slate-500 whitespace-nowrap">メール</th>
-                <th className="text-left px-4 py-3 font-medium text-slate-500 whitespace-nowrap">電話</th>
-                <th className="text-left px-4 py-3 font-medium text-slate-500 whitespace-nowrap w-28">ステータス</th>
+                <th className="text-left px-4 py-3 font-medium text-slate-600 whitespace-nowrap w-24">No</th>
+                <th className="text-left px-4 py-3 font-medium text-slate-600 whitespace-nowrap">顧客名</th>
+                <th className="text-left px-4 py-3 font-medium text-slate-600 whitespace-nowrap w-20">ランク</th>
+                <th className="text-left px-4 py-3 font-medium text-slate-600 whitespace-nowrap">メール</th>
+                <th className="text-left px-4 py-3 font-medium text-slate-600 whitespace-nowrap">電話</th>
+                <th className="text-left px-4 py-3 font-medium text-slate-600 whitespace-nowrap w-28">ステータス</th>
                 <th className="px-4 py-3 w-28"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.map(c => (
                 <tr key={c.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-4 py-3 text-slate-500 font-mono text-xs">{c.customer_no}</td>
+                  <td className="px-4 py-3 text-slate-600 font-mono text-xs">{c.customer_no}</td>
                   <td className="px-4 py-3 font-medium">
                     <Link href={`/customers/${c.id}`} className="hover:underline text-slate-800">
                       {c.name}
@@ -159,8 +159,8 @@ export default function CustomersPage() {
                       {c.rank}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-slate-500 max-w-[180px] truncate">{c.email ?? '-'}</td>
-                  <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{c.phone ?? '-'}</td>
+                  <td className="px-4 py-3 text-slate-600 max-w-[180px] truncate">{c.email ?? '-'}</td>
+                  <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{c.phone ?? '-'}</td>
                   <td className="px-4 py-3">
                     <span className={`px-2 py-0.5 rounded text-xs ${
                       c.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'
@@ -170,6 +170,12 @@ export default function CustomersPage() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex gap-1 justify-end">
+                      <Link
+                        href={`/customers/${c.id}/candidates`}
+                        className="text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50 transition-colors text-xs font-medium"
+                      >
+                        候補
+                      </Link>
                       <Link
                         href={`/customers/${c.id}/edit`}
                         className="text-slate-500 hover:text-slate-800 px-2 py-1 rounded hover:bg-slate-100 transition-colors text-xs"

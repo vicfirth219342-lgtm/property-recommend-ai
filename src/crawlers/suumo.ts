@@ -1,43 +1,48 @@
 import { chromium } from 'playwright'
 import { ScrapedProperty, CrawlOptions, PageCrawlResult, StoppedReason } from '@/types'
 import { buildDedupKey } from '@/lib/dedup'
+import { parseBuiltDate } from '@/lib/parseBuiltDate'
 import path from 'path'
 import fs from 'fs'
 
 const SNAPSHOT_DIR = path.join(process.cwd(), 'crawl-snapshots')
-const PAGE_SIZE = 30 // SUUMO デフォルト表示件数
+const PAGE_SIZE = 30
 
-// URLにページ番号を付与
+// 新着順ソートを付与（既に sort パラメータがある場合はスキップ）
+function addNewestFirstSort(baseUrl: string): string {
+  const url = new URL(baseUrl)
+  if (!url.searchParams.has('sort')) {
+    url.searchParams.set('sort', '3') // SUUMO: sort=3 = 新着順
+  }
+  return url.toString()
+}
+
 function buildPageUrl(baseUrl: string, page: number): string {
   const url = new URL(baseUrl)
   url.searchParams.set('page', String(page))
   return url.toString()
 }
 
-// 総件数・総ページ数をパース
 async function parseTotalCount(page: import('playwright').Page): Promise<{ totalCount: number | null; totalPages: number | null }> {
   try {
-    // 例: "300件" のテキストを探す
     const text = await page.$eval(
-      '.pagination-parts, .paginate_set, [class*="result"] [class*="count"], .lc-refineBar__resultNum',
+      '.pagination_set-hit, .pagecaption, .pagination-parts',
       (el) => el.textContent ?? ''
     ).catch(() => '')
 
-    const match = text.match(/([\d,]+)\s*件/)
+    const match = text.match(/([\d,]+)/)
     if (!match) return { totalCount: null, totalPages: null }
     const totalCount = parseInt(match[1].replace(/,/g, ''))
-    const totalPages = Math.ceil(totalCount / PAGE_SIZE)
-    return { totalCount, totalPages }
+    if (totalCount > 100000) return { totalCount: null, totalPages: null }
+    return { totalCount, totalPages: Math.ceil(totalCount / PAGE_SIZE) }
   } catch {
     return { totalCount: null, totalPages: null }
   }
 }
 
-// 1ページ分の物件を取得
 async function scrapeOnePage(page: import('playwright').Page): Promise<ScrapedProperty[]> {
   const properties: ScrapedProperty[] = []
 
-  // SUUMOの物件カードセレクタ（複数パターン対応）
   const selectors = [
     '.property_unit',
     '.cassette_unit',
@@ -53,43 +58,34 @@ async function scrapeOnePage(page: import('playwright').Page): Promise<ScrapedPr
 
   for (const item of items) {
     try {
-      // 物件名
       const name = await item.$eval(
         '.property_unit-title, .cassette_unit-title, h2, h3',
         (el) => el.textContent?.trim() ?? ''
       ).catch(() => '')
 
-      // URL
       const url = await item.$eval('a', (el) => (el as HTMLAnchorElement).href).catch(() => '')
-
-      // 住所
       const address = await item.$$eval('dd, [class*="address"], [class*="location"]', (els) =>
         els.find(el => el.textContent?.includes('区') || el.textContent?.includes('市'))?.textContent?.trim() ?? ''
       ).catch(() => '')
 
-      // テキスト全体から各情報を抽出
       const allText = await item.evaluate(el => el.textContent ?? '')
 
       const priceMatch = allText.match(/([\d,]+)万円/)
       const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) * 10000 : null
-
       const areaMatch = allText.match(/([\d.]+)\s*㎡/)
       const area_sqm = areaMatch ? parseFloat(areaMatch[1]) : null
-
       const floorMatch = allText.match(/([1-9][SLDK]+)/i)
       const floor_plan = floorMatch ? floorMatch[1].toUpperCase() : null
-
-      const ageMatch = allText.match(/築(\d+)年/)
-      const building_age = ageMatch ? parseInt(ageMatch[1]) : null
-
       const walkMatch = allText.match(/徒歩(\d+)分/)
       const walk_minutes = walkMatch ? parseInt(walkMatch[1]) : null
-
       const thumbnail = await item.$eval('img', (el) => (el as HTMLImageElement).src).catch(() => null)
-
-      // 部屋番号（号室）
       const roomMatch = name.match(/(\d+)号室?$/) ?? allText.match(/(\d{3,4})号室/)
       const room_number = roomMatch ? roomMatch[1] : null
+
+      // 築年月: 「2001年3月」「平成18年5月」「築25年」「新築」等を統一パース
+      const builtRaw =
+        allText.match(/(新築|築後未入居|(?:明治|大正|昭和|平成|令和)\d+年(?:\d+月)?|\d{4}年(?:\d+月)?|築\d+年)/)?.[0] ?? ''
+      const { builtYear, builtMonth, buildingAge } = parseBuiltDate(builtRaw)
 
       if (!name || !url) continue
 
@@ -100,7 +96,9 @@ async function scrapeOnePage(page: import('playwright').Page): Promise<ScrapedPr
         price,
         area_sqm,
         floor_plan,
-        building_age,
+        building_age: buildingAge,
+        built_year: builtYear,
+        built_month: builtMonth,
         walk_minutes,
         url,
         thumbnail_url: thumbnail ?? null,
@@ -120,6 +118,8 @@ export async function crawlSuumo(
   options: CrawlOptions,
   knownDedupKeys: Set<string>
 ): Promise<PageCrawlResult> {
+  const sortedUrl = addNewestFirstSort(baseUrl)
+
   const browser = await chromium.launch({ headless: true })
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -128,6 +128,10 @@ export async function crawlSuumo(
   const page = await context.newPage()
 
   const allProperties: ScrapedProperty[] = []
+  const seenProperties: ScrapedProperty[] = []
+  // dedup_key → scraped price（同一物件の重複登録を防ぐ）
+  const seenKeyMap = new Map<string, ScrapedProperty>()
+
   let totalCount: number | null = null
   let totalPages: number | null = null
   let checkedPages = 0
@@ -135,27 +139,25 @@ export async function crawlSuumo(
   let duplicateCount = 0
   let stoppedReason: StoppedReason = 'reached_last_page'
   let htmlPath: string | undefined
-  let consecutiveDupPages = 0
-  const stopOnDupPages = options.stopOnDuplicatePages ?? 2
-
-  // ページ上限を決定
+  // 物件レベルの連続重複カウンター（ページレベルではなく）
+  let consecutiveDups = 0
+  const stopOnDups = options.stopOnDuplicateCount ?? 20
   const maxPages = resolveMaxPages(options)
 
   try {
     let currentPage = 1
+    let earlyStop = false
 
-    while (true) {
-      // 上限チェック
+    while (!earlyStop) {
       if (maxPages !== null && currentPage > maxPages) {
         stoppedReason = 'reached_page_limit'
         break
       }
 
-      const pageUrl = buildPageUrl(baseUrl, currentPage)
+      const pageUrl = buildPageUrl(sortedUrl, currentPage)
       await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 })
       await page.waitForTimeout(1500 + Math.random() * 1000)
 
-      // 初回: 総件数取得 & HTMLスナップショット保存
       if (currentPage === 1) {
         const counts = await parseTotalCount(page)
         totalCount = counts.totalCount
@@ -175,46 +177,45 @@ export async function crawlSuumo(
         break
       }
 
-      // 差分モード: 重複チェック
-      let newInPage = 0
-      let dupInPage = 0
       for (const prop of pageProps) {
         const key = buildDedupKey(prop)
+
         if (knownDedupKeys.has(key)) {
-          dupInPage++
           duplicateCount++
+          // 価格更新検知用に収集（同一物件は最新価格で上書き）
+          seenKeyMap.set(key, prop)
+
+          if (options.mode === 'diff' || options.mode === 'manual') {
+            consecutiveDups++
+            if (consecutiveDups >= stopOnDups) {
+              stoppedReason = 'duplicate_sequence_detected'
+              earlyStop = true
+              break
+            }
+          }
         } else {
-          newInPage++
+          consecutiveDups = 0  // 新規物件が出たらリセット
           fetchedCount++
           allProperties.push(prop)
+          knownDedupKeys.add(key)  // 同一クロール内の重複も防ぐ
         }
       }
 
-      // 差分モードで全件重複 → 連続カウント
-      if (options.mode === 'diff' && newInPage === 0) {
-        consecutiveDupPages++
-        if (consecutiveDupPages >= stopOnDupPages) {
-          stoppedReason = 'duplicate_sequence_detected'
-          break
-        }
-      } else {
-        consecutiveDupPages = 0
-      }
+      if (earlyStop) break
 
-      // 最終ページ判定
       const detectedTotal = totalPages ?? 999
       if (currentPage >= detectedTotal) {
         stoppedReason = 'reached_last_page'
         break
       }
 
-      // 次のページへ進む前に待機（サイト負荷軽減）
       await page.waitForTimeout(2000 + Math.random() * 2000)
       currentPage++
     }
 
     return {
       properties: allProperties,
+      seenProperties: Array.from(seenKeyMap.values()),
       totalCount,
       totalPages,
       checkedPages,
@@ -234,6 +235,7 @@ export async function crawlSuumo(
     } catch {}
     return {
       properties: allProperties,
+      seenProperties: Array.from(seenKeyMap.values()),
       totalCount,
       totalPages,
       checkedPages,
@@ -252,7 +254,7 @@ export async function crawlSuumo(
 function resolveMaxPages(options: CrawlOptions): number | null {
   if (options.maxPages !== undefined) return options.maxPages
   switch (options.mode) {
-    case 'full':   return null  // 無制限
+    case 'full':   return null
     case 'manual': return 10
     case 'debug':  return 1
     case 'diff':

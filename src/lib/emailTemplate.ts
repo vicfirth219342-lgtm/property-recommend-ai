@@ -1,0 +1,214 @@
+interface PropertyItem {
+  name: string
+  url: string
+  address: string | null
+  current_price: number | null
+  last_price: number | null
+  floor_plan: string | null
+  area_sqm: number | null
+  walk_minutes: number | null
+  building_age: number | null
+  site: string
+  isNew: boolean
+  priceChange: { diff: number; diffMan: number; label: string } | null
+}
+
+interface CustomerSection {
+  customerName: string
+  customerNo: string
+  conditionSummary: string  // 例: 「墨田区・中古マンション」
+  candidateCount: number
+  properties: PropertyItem[]
+}
+
+interface AdminReportData {
+  date: string  // 例: 2026/07/07
+  sections: CustomerSection[]
+  appUrl: string
+}
+
+const SITE_LABELS: Record<string, string> = {
+  suumo: 'SUUMO',
+  athome: 'アットホーム',
+  homes: "HOME'S",
+}
+
+function formatPrice(price: number | null): string {
+  if (!price) return '価格未定'
+  return `${(price / 10000).toLocaleString()}万円`
+}
+
+// ────────────────────────────────────────────
+// HTML メール（リッチ版）
+// ────────────────────────────────────────────
+export function buildAdminReportHtml(data: AdminReportData): string {
+  const { date, sections, appUrl } = data
+
+  const totalProperties = sections.reduce((sum, s) => sum + s.candidateCount, 0)
+  const priceChangedTotal = sections.reduce(
+    (sum, s) => sum + s.properties.filter(p => p.priceChange !== null).length, 0
+  )
+  const newTotal = sections.reduce(
+    (sum, s) => sum + s.properties.filter(p => p.isNew).length, 0
+  )
+
+  const customerSections = sections.map(section => {
+    const propRows = section.properties.slice(0, 10).map((p, idx) => {
+      const priceHtml = p.priceChange
+        ? `<strong style="color:#1a1a1a;">${formatPrice(p.current_price)}</strong>
+           <span style="display:inline-block;margin-left:6px;background:${p.priceChange.diff < 0 ? '#FEE2E2' : '#DCFCE7'};color:${p.priceChange.diff < 0 ? '#DC2626' : '#16A34A'};font-size:11px;font-weight:700;padding:1px 7px;border-radius:20px;">
+             ${p.priceChange.diff < 0 ? '▼' : '▲'} ${p.priceChange.label}
+           </span>
+           <span style="font-size:11px;color:#9ca3af;text-decoration:line-through;margin-left:4px;">${formatPrice(p.last_price)}</span>`
+        : `<strong style="color:#1a1a1a;">${formatPrice(p.current_price)}</strong>`
+
+      const newBadge = p.isNew
+        ? `<span style="background:#3B82F6;color:#fff;font-size:10px;font-weight:700;padding:1px 5px;border-radius:3px;margin-right:4px;">新着</span>`
+        : ''
+
+      const specs = [
+        p.floor_plan,
+        p.area_sqm ? `${p.area_sqm}㎡` : null,
+        p.walk_minutes ? `徒歩${p.walk_minutes}分` : null,
+        p.building_age ? `築${p.building_age}年` : null,
+      ].filter(Boolean).join('　')
+
+      return `
+        <tr style="border-bottom:1px solid #f1f5f9;">
+          <td style="padding:10px 8px;vertical-align:top;color:#6b7280;font-size:12px;white-space:nowrap;">${idx + 1}</td>
+          <td style="padding:10px 8px;vertical-align:top;">
+            <div style="margin-bottom:3px;">${newBadge}<span style="font-size:10px;color:#94a3b8;">${SITE_LABELS[p.site] ?? p.site}</span></div>
+            <a href="${p.url}" style="font-size:13px;font-weight:600;color:#1e40af;text-decoration:none;line-height:1.4;">${p.name}</a>
+            ${p.address ? `<div style="font-size:11px;color:#6b7280;margin-top:2px;">${p.address}</div>` : ''}
+          </td>
+          <td style="padding:10px 8px;vertical-align:top;white-space:nowrap;">
+            ${priceHtml}
+            ${specs ? `<div style="font-size:11px;color:#9ca3af;margin-top:3px;">${specs}</div>` : ''}
+          </td>
+        </tr>
+      `
+    }).join('')
+
+    const moreNote = section.candidateCount > 10
+      ? `<p style="margin:8px 0 0;font-size:12px;color:#9ca3af;text-align:right;">他 ${section.candidateCount - 10} 件 → <a href="${appUrl}/customers/${section.properties[0]?.url ? '' : ''}candidates" style="color:#6b7280;">全件確認</a></p>`
+      : ''
+
+    return `
+      <div style="margin-bottom:32px;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px;">
+          <tr>
+            <td>
+              <h3 style="margin:0;font-size:15px;font-weight:700;color:#1e293b;border-left:3px solid #1e293b;padding-left:10px;">
+                ${section.customerName}
+                <span style="font-size:12px;font-weight:400;color:#64748b;margin-left:6px;">${section.customerNo}</span>
+              </h3>
+              ${section.conditionSummary ? `<p style="margin:4px 0 0 13px;font-size:12px;color:#64748b;">${section.conditionSummary}</p>` : ''}
+            </td>
+            <td style="text-align:right;vertical-align:top;">
+              <span style="font-size:12px;color:#64748b;">候補 <strong style="color:#1e293b;">${section.candidateCount}</strong> 件</span>
+            </td>
+          </tr>
+        </table>
+
+        <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;border-collapse:separate;border-spacing:0;overflow:hidden;">
+          <thead>
+            <tr style="background:#f8fafc;">
+              <th style="padding:8px;font-size:11px;color:#94a3b8;font-weight:500;text-align:left;width:24px;">#</th>
+              <th style="padding:8px;font-size:11px;color:#94a3b8;font-weight:500;text-align:left;">物件名 / 所在地</th>
+              <th style="padding:8px;font-size:11px;color:#94a3b8;font-weight:500;text-align:left;">価格 / スペック</th>
+            </tr>
+          </thead>
+          <tbody>${propRows}</tbody>
+        </table>
+        ${moreNote}
+      </div>
+    `
+  }).join(`<div style="border-top:1px solid #e2e8f0;margin-bottom:32px;"></div>`)
+
+  return `
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:'Helvetica Neue',Arial,'Hiragino Sans','Hiragino Kaku Gothic ProN','Yu Gothic',sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0">
+    <tr>
+      <td align="center" style="padding:24px 16px;">
+        <table width="680" cellpadding="0" cellspacing="0" style="max-width:680px;width:100%;">
+
+          <!-- ヘッダー -->
+          <tr>
+            <td style="background:#1e293b;border-radius:10px 10px 0 0;padding:20px 28px;">
+              <p style="margin:0;font-size:11px;color:#94a3b8;letter-spacing:0.12em;">DAILY REPORT</p>
+              <h1 style="margin:4px 0 0;font-size:18px;font-weight:700;color:#fff;">
+                ${date} 提案候補レポート
+              </h1>
+            </td>
+          </tr>
+
+          <!-- サマリー -->
+          <tr>
+            <td style="background:#fff;padding:20px 28px;border-bottom:1px solid #e2e8f0;">
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td width="33%" align="center" style="padding:12px;background:#f8fafc;border-radius:8px;">
+                    <div style="font-size:26px;font-weight:700;color:#1e293b;">${sections.length}</div>
+                    <div style="font-size:11px;color:#64748b;margin-top:2px;">対象顧客</div>
+                  </td>
+                  <td width="4%"></td>
+                  <td width="33%" align="center" style="padding:12px;background:#f8fafc;border-radius:8px;">
+                    <div style="font-size:26px;font-weight:700;color:#1e293b;">${totalProperties}</div>
+                    <div style="font-size:11px;color:#64748b;margin-top:2px;">提案候補合計</div>
+                  </td>
+                  <td width="4%"></td>
+                  <td width="33%" align="center" style="padding:12px;background:#fffbeb;border-radius:8px;">
+                    <div style="font-size:26px;font-weight:700;color:#d97706;">${priceChangedTotal}</div>
+                    <div style="font-size:11px;color:#64748b;margin-top:2px;">価格変動</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- 本文 -->
+          <tr>
+            <td style="background:#fff;padding:28px;">
+              ${customerSections}
+
+              <!-- 全件確認ボタン -->
+              <div style="text-align:center;margin-top:16px;">
+                <a href="${appUrl}/customers"
+                   style="display:inline-block;background:#1e293b;color:#fff;font-size:13px;font-weight:600;text-decoration:none;padding:12px 32px;border-radius:8px;">
+                  管理画面で全件確認 →
+                </a>
+              </div>
+            </td>
+          </tr>
+
+          <!-- フッター -->
+          <tr>
+            <td style="background:#f8fafc;border-radius:0 0 10px 10px;padding:16px 28px;text-align:center;">
+              <p style="margin:0;font-size:11px;color:#94a3b8;">
+                このメールは物件提案システムから毎朝9時（JST）に自動送信されています。
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim()
+}
+
+// ────────────────────────────────────────────
+// 件名
+// ────────────────────────────────────────────
+export function buildAdminReportSubject(date: string, totalProperties: number, priceChangedCount: number): string {
+  const priceNote = priceChangedCount > 0 ? `・価格変動${priceChangedCount}件` : ''
+  return `【${date} 提案候補】${totalProperties}件${priceNote}`
+}
