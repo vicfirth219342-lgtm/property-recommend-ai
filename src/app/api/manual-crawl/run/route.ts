@@ -36,16 +36,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'jobId, crawlUrl, site は必須です' }, { status: 400 })
   }
 
-  const supabase = createServiceClient()
-
-  // ジョブを実行中に更新
-  await supabase.from('crawl_jobs').update({
-    status: 'running',
-    started_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  }).eq('id', jobId)
+  // supabase と jobId を catch スコープで参照できるよう外に宣言
+  let supabase: ReturnType<typeof createServiceClient> | null = null
 
   try {
+    supabase = createServiceClient()
+
+    // ジョブを実行中に更新
+    await supabase.from('crawl_jobs').update({
+      status: 'running',
+      started_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', jobId)
     // Playwright クローラーを動的インポート
     const { crawlSuumo }  = await import('@/crawlers/suumo')
     const { crawlAthome } = await import('@/crawlers/athome')
@@ -185,12 +187,15 @@ export async function POST(req: NextRequest) {
 
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
-    await supabase.from('crawl_jobs').update({
-      status: 'failed',
-      error_message: msg,
-      finished_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }).eq('id', jobId)
+    console.error('[manual-crawl/run] Error:', msg)
+    if (supabase && jobId) {
+      await supabase.from('crawl_jobs').update({
+        status: 'failed',
+        error_message: msg,
+        finished_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }).eq('id', jobId)
+    }
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
