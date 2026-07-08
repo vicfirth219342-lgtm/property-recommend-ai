@@ -75,6 +75,8 @@ export default function ReinsCheckPage() {
   const [matchError, setMatchError] = useState('')
   const [lastExtracted, setLastExtracted] = useState<ExtractedProperty | null>(null)
   const [reinsUrlDetected, setReinsUrlDetected] = useState<string | null>(null)
+  const [accumulatedText, setAccumulatedText] = useState('')
+  const [accumulatedPages, setAccumulatedPages] = useState(0)
 
   // 一覧取得
   const loadChecks = useCallback(async () => {
@@ -166,22 +168,40 @@ export default function ReinsCheckPage() {
     }
   }
 
-  // レインズ結果を照合
-  async function matchReins(id: string) {
+  // 現在のテキストを蓄積（複数ページ対応）
+  function appendPage() {
     if (!reinsInput.trim()) return
+    setAccumulatedText(prev => prev + (prev ? '\n\n---\n\n' : '') + reinsInput.trim())
+    setAccumulatedPages(prev => prev + 1)
+    setReinsInput('')
+    setReinsUrlDetected(null)
+  }
+
+  // 蓄積テキストをリセット
+  function resetAccumulated() {
+    setAccumulatedText('')
+    setAccumulatedPages(0)
+    setReinsInput('')
+    setReinsUrlDetected(null)
+  }
+
+  // レインズ結果を照合（蓄積テキスト全体を送信）
+  async function matchReins(id: string) {
+    // 蓄積済みテキスト優先、なければ現在の入力を使用
+    const textToMatch = accumulatedText || reinsInput.trim()
+    if (!textToMatch) return
     setMatching(true)
     setMatchError('')
     setLastExtracted(null)
     const res = await fetch(`/api/reins-check/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reins_input: reinsInput }),
+      body: JSON.stringify({ reins_input: textToMatch }),
     })
     const data = await res.json()
     if (res.ok) {
-      // サーバーが抽出したフィールドをデバッグ表示
       if (data._extracted) setLastExtracted(data._extracted)
-      setReinsInput('')
+      resetAccumulated()
       setActiveCheckId(null)
       await loadChecks()
     } else {
@@ -480,7 +500,7 @@ export default function ReinsCheckPage() {
                       </div>
                     )}
                     <button
-                      onClick={() => setActiveCheckId(isActive ? null : c.id)}
+                      onClick={() => { if (isActive) resetAccumulated(); setActiveCheckId(isActive ? null : c.id) }}
                       className="text-xs border border-blue-300 text-blue-600 px-3 py-1 rounded hover:bg-blue-50 transition-colors self-start"
                     >
                       {isActive ? '閉じる' : 'レインズ結果を貼る'}
@@ -498,29 +518,51 @@ export default function ReinsCheckPage() {
                 {isActive && (
                   <div className="border-t border-slate-200 bg-slate-50 px-4 py-4">
                     <p className="text-xs text-slate-500 mb-2">
-                      レインズにログイン後、検索結果のテキストをそのまま貼り付けてください。
-                      複数物件が含まれていても構いません。
+                      レインズで検索後、各ページのテキストをコピーして「このページを追加」→ 全ページ追加後に「照合する」。
+                      <span className="ml-1 text-blue-600">複数ページ対応。</span>
                     </p>
+
+                    {/* 蓄積済みページ表示 */}
+                    {accumulatedPages > 0 && (
+                      <div className="mb-3 flex items-center gap-3 p-2 bg-green-50 border border-green-200 rounded-lg">
+                        <span className="text-green-700 text-xs font-medium">
+                          ✓ {accumulatedPages}ページ分を蓄積済み
+                        </span>
+                        <span className="text-green-600 text-xs">
+                          （次のページを貼り付けて追加、または「照合する」で実行）
+                        </span>
+                        <button
+                          onClick={resetAccumulated}
+                          className="ml-auto text-xs text-red-400 hover:text-red-600"
+                        >
+                          リセット
+                        </button>
+                      </div>
+                    )}
+
                     <textarea
                       value={reinsInput}
                       onChange={e => handleReinsInputChange(e.target.value)}
                       rows={6}
-                      placeholder="レインズの検索結果URLまたはテキストをここに貼り付け..."
+                      placeholder={accumulatedPages > 0
+                        ? `${accumulatedPages + 1}ページ目のテキストをここに貼り付け...`
+                        : 'レインズの検索結果URLまたはテキストをここに貼り付け...'}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 font-mono resize-none mb-3"
                     />
+
                     {/* URL検出時のヘルパー */}
                     {reinsUrlDetected && (
                       <div className="mb-3 p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm">
                         <p className="font-medium text-blue-800 mb-2">🔗 URLが検出されました</p>
                         <p className="text-blue-700 text-xs mb-3">
-                          レインズはログイン認証があるため、URLから直接取得できません。<br />
-                          以下の手順でテキストをコピーして、上のテキストエリアに貼り付けてください。
+                          レインズはログイン認証があるため直接取得できません。以下の手順でコピーしてください。
                         </p>
                         <ol className="text-xs text-blue-700 space-y-1 mb-3 list-decimal list-inside">
-                          <li>下の「レインズを開く」ボタンをクリック（ログイン済みのまま開きます）</li>
-                          <li>開いたページで <kbd className="bg-white border border-blue-300 rounded px-1">⌘A</kbd> で全選択</li>
-                          <li><kbd className="bg-white border border-blue-300 rounded px-1">⌘C</kbd> でコピー</li>
-                          <li>上のテキストエリアに貼り付けて「照合する」を押す</li>
+                          <li>「レインズを開く」をクリック（ログイン済みのまま開きます）</li>
+                          <li><kbd className="bg-white border border-blue-300 rounded px-1">⌘A</kbd> で全選択 →
+                            <kbd className="bg-white border border-blue-300 rounded px-1 ml-1">⌘C</kbd> でコピー</li>
+                          <li>テキストエリアに貼り付けて「このページを追加」</li>
+                          <li>次のページも同様に繰り返す</li>
                         </ol>
                         <div className="flex gap-2">
                           <a
@@ -535,19 +577,33 @@ export default function ReinsCheckPage() {
                             onClick={() => { setReinsInput(''); setReinsUrlDetected(null) }}
                             className="text-xs text-blue-500 hover:text-blue-700 border border-blue-300 px-3 py-1.5 rounded-lg"
                           >
-                            クリアしてテキストを貼り付ける
+                            クリア
                           </button>
                         </div>
                       </div>
                     )}
-                    <div className="flex items-center gap-3">
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* ページ追加ボタン */}
+                      <button
+                        onClick={appendPage}
+                        disabled={!reinsInput.trim() || !!reinsUrlDetected}
+                        className="bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 disabled:opacity-40 transition-colors"
+                      >
+                        このページを追加 {accumulatedPages > 0 && `(${accumulatedPages + 1}ページ目)`}
+                      </button>
+
+                      {/* 照合ボタン: 蓄積済みがあればそちらを使用 */}
                       <button
                         onClick={() => matchReins(c.id)}
-                        disabled={matching || !reinsInput.trim()}
+                        disabled={matching || (!accumulatedText && !reinsInput.trim()) || !!reinsUrlDetected}
                         className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors"
                       >
-                        {matching ? '照合中...' : '照合する'}
+                        {matching ? '照合中...' : accumulatedPages > 0
+                          ? `照合する（${accumulatedPages}ページ分）`
+                          : '照合する'}
                       </button>
+
                       {matchError && (
                         <span className="text-red-500 text-xs">{matchError}</span>
                       )}
