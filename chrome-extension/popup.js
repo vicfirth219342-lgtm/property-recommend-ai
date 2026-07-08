@@ -23,8 +23,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     chrome.runtime.openOptionsPage()
   })
 
-  // ストレージから設定読み込み
-  const { apiBase, token } = await chrome.storage.local.get(['apiBase', 'token'])
+  // ストレージから設定読み込み（パスが混入していてもオリジンだけ使用）
+  const stored = await chrome.storage.local.get(['apiBase', 'token'])
+  const token = stored.token ?? ''
+  let apiBase = stored.apiBase ?? ''
+  try { apiBase = new URL(apiBase).origin } catch { /* 不正URLはそのまま */ }
 
   if (!apiBase) {
     mainContent.style.display = 'none'
