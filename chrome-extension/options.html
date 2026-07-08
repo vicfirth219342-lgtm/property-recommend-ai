@@ -26,9 +26,11 @@
 <body>
   <h1>レインズ照合ツール 設定</h1>
 
-  <label>照合アプリのURL</label>
-  <input type="text" id="apiBase" placeholder="https://your-app.vercel.app" />
-  <p class="hint">末尾スラッシュなし。例: https://property-app.vercel.app</p>
+  <label>照合アプリのURL（本番URLを指定してください）</label>
+  <input type="text" id="apiBase" placeholder="https://property-recommend-ai.vercel.app" />
+  <p class="hint">末尾スラッシュなし。<strong>-git-main- を含むPreview URLは使用不可</strong>（CORSエラー）</p>
+  <div id="previewWarning" style="display:none; background:#fef2f2; border:1px solid #fca5a5; border-radius:6px; padding:10px; font-size:12px; color:#b91c1c; margin-bottom:12px; line-height:1.6;"></div>
+  <button id="fixBtn" style="display:none; background:#dc2626; margin-bottom:12px;">Preview URLを自動修正</button>
 
   <label>APIトークン（任意）</label>
   <input type="password" id="token" placeholder="設定している場合のみ入力" />

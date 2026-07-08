@@ -1,3 +1,16 @@
+// Vercel Preview URL を本番URLへ自動変換
+// 例: https://project-git-main-team.vercel.app → https://project-team.vercel.app
+function fixVercelPreviewUrl(url) {
+  return url
+    .replace(/-git-[a-z0-9]+(-[a-z0-9])/i, '$1')   // -git-main-team → -team
+    .replace(/-git-[a-z0-9]+\./i, '.')              // -git-main.vercel → .vercel（チームなし）
+}
+
+function isPreviewUrl(url) {
+  return /-git-[a-z0-9]+[-\.]/i.test(url)
+}
+
+
 document.addEventListener('DOMContentLoaded', async () => {
   const pageStatusEl  = document.getElementById('pageStatus')
   const mainContent   = document.getElementById('mainContent')
@@ -11,6 +24,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const sessionCount  = document.getElementById('sessionCount')
   const sessionHint   = document.getElementById('sessionHint')
   const stepHint      = document.getElementById('stepHint')
+  const apiUrlBar     = document.getElementById('apiUrlBar')
+  const apiUrlText    = document.getElementById('apiUrlText')
+  const previewUrlWarn = document.getElementById('previewUrlWarn')
 
   document.getElementById('optionsLink').addEventListener('click', e => {
     e.preventDefault(); chrome.runtime.openOptionsPage()
@@ -19,13 +35,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     e.preventDefault(); chrome.runtime.openOptionsPage()
   })
 
-  // 設定読み込み
+  // ── 設定読み込み ──────────────────────────────────────────
   const stored = await chrome.storage.local.get(['apiBase', 'token', 'sessionId'])
   const token = stored.token ?? ''
   let apiBase = stored.apiBase ?? ''
+  let sessionId = stored.sessionId ?? null
+
+  // オリジンのみ取り出す
   try { apiBase = new URL(apiBase).origin } catch { /* 不正URL */ }
 
-  let sessionId = stored.sessionId ?? null
+  // Preview URLを自動修正して保存し直す
+  if (apiBase && isPreviewUrl(apiBase)) {
+    const fixed = fixVercelPreviewUrl(apiBase)
+    console.warn(`[レインズ照合] Preview URL検出 → 本番URLへ自動修正: ${apiBase} → ${fixed}`)
+    apiBase = fixed
+    await chrome.storage.local.set({ apiBase: fixed })
+  }
+
+  // 接続先URLを表示
+  if (apiBase) {
+    apiUrlBar.style.display = 'block'
+    apiUrlText.textContent = apiBase
+    if (isPreviewUrl(apiBase)) {
+      previewUrlWarn.style.display = 'block'
+    }
+  }
 
   if (!apiBase) {
     mainContent.style.display = 'none'
@@ -35,7 +69,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     return
   }
 
-  // 現在タブのURL確認
+  // ── 現在タブのURL確認 ───────────────────────────────────
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
   const url = tab?.url ?? ''
 
@@ -47,7 +81,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     pageStatusEl.className = 'warn'
   }
 
-  // セッション状態を更新する関数
+  // ── セッション状態UI ─────────────────────────────────────
   function updateSessionUI(count, id) {
     if (!count || count === 0) {
       sessionPanel.className = 'empty'
@@ -83,16 +117,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (data.session?.id === sessionId) {
           updateSessionUI(data.session.page_count, sessionId)
         } else {
-          // 別セッションが開いている、またはセッション終了済み
           sessionId = data.session?.id ?? null
           await chrome.storage.local.set({ sessionId })
           updateSessionUI(data.session?.page_count ?? 0, sessionId)
         }
       }
-    } catch { /* ネットワークエラー → UIはデフォルトのまま */ }
+    } catch { /* ネットワークエラー → UI変更なし */ }
   }
 
-  // ─── このページを追加 ───────────────────────────────────────
+  // ── このページを追加 ─────────────────────────────────────
   addPageBtn.addEventListener('click', async () => {
     addPageBtn.disabled = true
     addPageBtn.textContent = '送信中...'
@@ -130,11 +163,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         data = await res.json()
       } catch {
         throw new Error(
-          `API応答がHTMLです（HTTP ${res.status}）。\n` +
-          `Vercelへの最新コードのデプロイを確認してください。\n` +
-          `送信先: ${apiBase}/api/reins/import-page`
+          `APIの応答がHTMLです（HTTP ${res.status}）。\n` +
+          `接続先: ${apiBase}/api/reins/import-page\n` +
+          `デプロイ済みか・本番URLか確認してください。`
         )
       }
+
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
 
       sessionId = data.session_id
@@ -145,8 +179,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       showResult(
         `✓ ${data.page_count}ページ目を追加しました\n` +
         (data.page_count >= 2
-          ? '次のページに移動して同様に追加できます。\n全ページ追加後、アプリで照合してください。'
-          : '次のページも追加できます。'),
+          ? '次のページへ移動して同様に追加できます。\n全ページ追加後、アプリで照合してください。'
+          : 'さらに次のページも追加できます。'),
         'success'
       )
     } catch (e) {
@@ -157,13 +191,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   })
 
-  // ─── アプリで照合する ────────────────────────────────────────
+  // ── アプリで照合する ─────────────────────────────────────
   openAppBtn.addEventListener('click', () => {
-    const appUrl = `${apiBase}/reins-check`
-    chrome.tabs.create({ url: appUrl })
+    chrome.tabs.create({ url: `${apiBase}/reins-check` })
   })
 
-  // ─── セッションをクリア ──────────────────────────────────────
+  // ── セッションをクリア ────────────────────────────────────
   clearBtn.addEventListener('click', async () => {
     if (!sessionId) return
     if (!confirm(`${sessionCount.textContent}分のデータを削除しますか？`)) return
