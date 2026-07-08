@@ -49,10 +49,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     const listUrl = `${apiBase}/api/reins-check`
     console.log('[レインズ照合] 物件リスト取得URL:', listUrl)
+    // デバッグ用: 呼び出しURLをUIに表示
+    pageStatusEl.textContent = `接続先: ${listUrl}`
     const res = await fetch(listUrl, {
       headers: token ? { 'x-extension-token': token } : {},
     })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status} (${listUrl})`)
     const checks = await res.json()
 
     checkSelect.innerHTML = ''
