@@ -13,7 +13,13 @@
 
 import { createServiceClient } from '@/lib/supabase'
 import { CustomerCondition } from '@/types'
-import { buildPortalUrl, PortalAreaMapping, SiteKey, makeUrlLog } from './portalUrlBuilder'
+import {
+  buildPortalUrlV2,
+  PortalAreaMapping,
+  NewMasterData,
+  SiteKey,
+  makeUrlLog,
+} from './portalUrlBuilder'
 
 type SupabaseClient = ReturnType<typeof createServiceClient>
 
@@ -65,26 +71,46 @@ export async function generateAndSaveUrls(
   const db = supabase ?? createServiceClient()
   const summaries: GenerationSummary[] = []
 
-  // エリアマッピング取得 (一括取得してポータルループ内で使い回す)
-  const { data: mappings, error: mapErr } = await db
-    .from('portal_area_mappings')
-    .select('id, portal, area_type, display_name, prefecture, city, station_name, portal_code, portal_url_param')
+  // ── 新マスター取得（area_masters / area_aliases / portal_area_params）──
+  const [mastersRes, aliasesRes, paramsRes, oldMappingsRes] = await Promise.all([
+    db.from('area_masters').select('id, area_type, display_name, prefecture, city, ward, station_name, line_name, station_ward'),
+    db.from('area_aliases').select('alias, area_id'),
+    db.from('portal_area_params').select('area_id, portal, param_type, portal_code, portal_url_param'),
+    db.from('portal_area_mappings').select('id, portal, area_type, display_name, prefecture, city, station_name, portal_code, portal_url_param'),
+  ])
 
-  if (mapErr) {
-    console.error('[urlGenerationService] area_mappings fetch error:', mapErr.message)
-    // エリアマッピング取得失敗でも処理継続（空配列で生成）
+  if (mastersRes.error) console.error('[urlGenerationService] area_masters fetch error:', mastersRes.error.message)
+  if (aliasesRes.error) console.error('[urlGenerationService] area_aliases fetch error:', aliasesRes.error.message)
+  if (paramsRes.error)  console.error('[urlGenerationService] portal_area_params fetch error:', paramsRes.error.message)
+  if (oldMappingsRes.error) console.error('[urlGenerationService] portal_area_mappings fetch error:', oldMappingsRes.error.message)
+
+  const newMaster: NewMasterData = {
+    masters: (mastersRes.data ?? []) as NewMasterData['masters'],
+    aliases: (aliasesRes.data ?? []) as NewMasterData['aliases'],
+    params:  (paramsRes.data ?? [])  as NewMasterData['params'],
+  }
+  const oldMappings = (oldMappingsRes.data ?? []) as PortalAreaMapping[]
+
+  const debugLines: string[] = []
+  const debugLog = (msg: string) => {
+    debugLines.push(msg)
+    console.log(msg)
   }
 
-  const allMappings = (mappings ?? []) as PortalAreaMapping[]
+  debugLog(`[urlGen] 顧客条件 area="${condition.area ?? ''}"`)
+  debugLog(`[urlGen] 新マスター: masters=${newMaster.masters.length} aliases=${newMaster.aliases.length} params=${newMaster.params.length}`)
+  debugLog(`[urlGen] 旧マスター: ${oldMappings.length}件`)
+
   const hash = conditionHash(condition)
 
   for (const portal of PORTALS) {
     try {
-      const result = buildPortalUrl(portal, condition, allMappings)
+      const result = buildPortalUrlV2(portal, condition, newMaster, oldMappings, debugLog)
 
       const log = {
         ...makeUrlLog(portal, result, condition),
         condition_hash: hash,
+        debug: debugLines,
       }
 
       // 既存の自動生成 URL を削除 (手動登録分は残す)

@@ -18,10 +18,4 @@ WHERE prc.portal_url = p.url
   AND p.name IS NOT NULL
   AND p.name != '';
 
--- floor_number も同様に補完
-UPDATE pending_reins_checks prc
-SET floor_number = p.floor_number
-FROM properties p
-WHERE prc.portal_url = p.url
-  AND prc.floor_number IS NULL
-  AND p.floor_number IS NOT NULL;
+-- floor_number は properties テーブルに存在しないため補完不要（スキップ）

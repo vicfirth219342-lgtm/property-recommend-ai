@@ -97,22 +97,180 @@ function suumoAge(years: number | null): string | null {
 }
 
 // -------------------------------------------------------
+// 新マスターテーブル用の型
+// -------------------------------------------------------
+
+export interface AreaMasterRow {
+  id: string
+  area_type: string
+  display_name: string
+  prefecture: string | null
+  city: string | null
+  ward: string | null
+  station_name: string | null
+  line_name: string | null
+  station_ward: string | null
+}
+
+export interface PortalAreaParamRow {
+  area_id: string
+  portal: string
+  param_type: string
+  portal_code: string | null
+  portal_url_param: string
+}
+
+export interface AreaAliasRow {
+  alias: string
+  area_id: string
+}
+
+export interface NewMasterData {
+  masters: AreaMasterRow[]
+  params: PortalAreaParamRow[]
+  aliases: AreaAliasRow[]
+}
+
+// -------------------------------------------------------
 // エリア名解決
 // -------------------------------------------------------
 
-/** area フィールドを区切り文字で分割 */
+/** area フィールドを区切り文字で分割（重複排除済み） */
 function splitAreaNames(area: string | null): string[] {
   if (!area) return []
+  const seen = new Set<string>()
   return area
     .split(/[・、,\s]+/)
     .map(s => s.trim())
-    .filter(s => s.length > 0)
+    .filter(s => {
+      if (s.length === 0 || seen.has(s)) return false
+      seen.add(s)
+      return true
+    })
+}
+
+const TYPE_PRIORITY: Record<string, number> = { station: 0, town: 1, ward: 2, city: 2, prefecture: 3 }
+
+/** NewMasterData の1エントリを旧 PortalAreaMapping 形式に変換 */
+function toPortalAreaMapping(master: AreaMasterRow, param: PortalAreaParamRow): PortalAreaMapping {
+  return {
+    id: master.id,
+    portal: param.portal as SiteKey,
+    area_type: master.area_type as PortalAreaMapping['area_type'],
+    display_name: master.display_name,
+    prefecture: master.prefecture,
+    city: master.city,
+    station_name: master.station_name,
+    portal_code: param.portal_code,
+    portal_url_param: param.portal_url_param,
+  }
 }
 
 /**
- * area 文字列の各部分を portal_area_mappings から照合し、
- * 最適なエントリを返す。
- * 優先度: 駅(station) > 市区町村(city) > 町名(town) > 都道府県(prefecture)
+ * area 文字列の各部分を新マスター（area_masters / area_aliases / portal_area_params）から照合。
+ * 解決できない場合は旧 portal_area_mappings にフォールバック。
+ *
+ * 優先度:
+ *   ① area_aliases.alias 完全一致
+ *   ② area_masters.display_name 完全一致
+ *   ③ display_name / alias 部分一致
+ *   ④ 旧 portal_area_mappings フォールバック
+ */
+export function resolveAreaNamesV2(
+  areaString: string | null,
+  newMaster: NewMasterData,
+  oldMappings: PortalAreaMapping[],
+  portal: SiteKey,
+  debugLog?: (msg: string) => void,
+): AreaMatch[] {
+  const names = splitAreaNames(areaString)  // 重複排除済み
+  if (names.length === 0) return []
+
+  const { masters, params, aliases } = newMaster
+  const portalParams = params.filter(p => p.portal === portal)
+  const oldPortalMaps = oldMappings.filter(m => m.portal === portal)
+
+  /** master.id → PortalAreaMapping 変換（portal param がない場合 null） */
+  const resolveById = (masterId: string): PortalAreaMapping | null => {
+    const param = portalParams.find(p => p.area_id === masterId)
+    if (!param) return null
+    const master = masters.find(m => m.id === masterId)
+    if (!master) return null
+    return toPortalAreaMapping(master, param)
+  }
+
+  return names.map(name => {
+    debugLog?.(`[resolve] 入力: "${name}"`)
+
+    // ① alias 完全一致
+    const aliasMatch = aliases.find(a => a.alias === name)
+    if (aliasMatch) {
+      const mapping = resolveById(aliasMatch.area_id)
+      if (mapping) {
+        debugLog?.(`[resolve] ① alias完全一致: "${name}" → ${mapping.display_name} (${mapping.area_type}) param=${mapping.portal_url_param}`)
+        return { inputName: name, mapping, reason: null }
+      }
+      debugLog?.(`[resolve] ① alias一致だがportal_area_paramsなし: "${name}"`)
+    }
+
+    // ② display_name 完全一致
+    const exactMasters = masters
+      .filter(m => m.display_name === name)
+      .sort((a, b) => (TYPE_PRIORITY[a.area_type] ?? 9) - (TYPE_PRIORITY[b.area_type] ?? 9))
+    for (const m of exactMasters) {
+      const mapping = resolveById(m.id)
+      if (mapping) {
+        debugLog?.(`[resolve] ② display_name完全一致: "${name}" → ${mapping.display_name} (${mapping.area_type}) param=${mapping.portal_url_param}`)
+        return { inputName: name, mapping, reason: null }
+      }
+    }
+
+    // ③ 部分一致（display_name / alias どちらか）
+    const partialMasterIds = new Set<string>()
+    masters
+      .filter(m => name.includes(m.display_name) || m.display_name.includes(name))
+      .forEach(m => partialMasterIds.add(m.id))
+    aliases
+      .filter(a => name.includes(a.alias) || a.alias.includes(name))
+      .forEach(a => partialMasterIds.add(a.area_id))
+
+    const partialCandidates = Array.from(partialMasterIds)
+      .map(id => masters.find(m => m.id === id))
+      .filter((m): m is AreaMasterRow => m != null)
+      .sort((a, b) => (TYPE_PRIORITY[a.area_type] ?? 9) - (TYPE_PRIORITY[b.area_type] ?? 9))
+
+    for (const m of partialCandidates) {
+      const mapping = resolveById(m.id)
+      if (mapping) {
+        debugLog?.(`[resolve] ③ 部分一致: "${name}" → ${mapping.display_name} (${mapping.area_type}) param=${mapping.portal_url_param}`)
+        return { inputName: name, mapping, reason: null }
+      }
+    }
+
+    // ④ 旧マスター フォールバック
+    const oldExact = oldPortalMaps
+      .filter(m => m.display_name === name)
+      .sort((a, b) => (TYPE_PRIORITY[a.area_type] ?? 9) - (TYPE_PRIORITY[b.area_type] ?? 9))
+    if (oldExact.length > 0) {
+      debugLog?.(`[resolve] ④ 旧マスターfallback(完全一致): "${name}" → ${oldExact[0].display_name}`)
+      return { inputName: name, mapping: oldExact[0], reason: null }
+    }
+
+    const oldPartial = oldPortalMaps
+      .filter(m => name.includes(m.display_name) || m.display_name.includes(name))
+      .sort((a, b) => (TYPE_PRIORITY[a.area_type] ?? 9) - (TYPE_PRIORITY[b.area_type] ?? 9))
+    if (oldPartial.length > 0) {
+      debugLog?.(`[resolve] ④ 旧マスターfallback(部分一致): "${name}" → ${oldPartial[0].display_name}`)
+      return { inputName: name, mapping: oldPartial[0], reason: null }
+    }
+
+    debugLog?.(`[resolve] 未解決: "${name}"`)
+    return { inputName: name, mapping: null, reason: `"${name}" はマスターに未登録` }
+  })
+}
+
+/**
+ * 旧マスターのみで解決する（後方互換用）
  */
 export function resolveAreaNames(
   areaString: string | null,
@@ -123,24 +281,17 @@ export function resolveAreaNames(
   if (names.length === 0) return []
 
   const portalMaps = allMappings.filter(m => m.portal === portal)
-  const typePriority: Record<string, number> = { station: 0, town: 1, city: 2, prefecture: 3 }
 
   return names.map(name => {
-    // 1. 完全一致
-    const exact = portalMaps.filter(m => m.display_name === name)
-    if (exact.length > 0) {
-      exact.sort((a, b) => typePriority[a.area_type] - typePriority[b.area_type])
-      return { inputName: name, mapping: exact[0], reason: null }
-    }
+    const exact = portalMaps
+      .filter(m => m.display_name === name)
+      .sort((a, b) => (TYPE_PRIORITY[a.area_type] ?? 9) - (TYPE_PRIORITY[b.area_type] ?? 9))
+    if (exact.length > 0) return { inputName: name, mapping: exact[0], reason: null }
 
-    // 2. 部分一致（name が display_name を含む、または display_name が name を含む）
-    const partial = portalMaps.filter(m =>
-      name.includes(m.display_name) || m.display_name.includes(name)
-    )
-    if (partial.length > 0) {
-      partial.sort((a, b) => typePriority[a.area_type] - typePriority[b.area_type])
-      return { inputName: name, mapping: partial[0], reason: null }
-    }
+    const partial = portalMaps
+      .filter(m => name.includes(m.display_name) || m.display_name.includes(name))
+      .sort((a, b) => (TYPE_PRIORITY[a.area_type] ?? 9) - (TYPE_PRIORITY[b.area_type] ?? 9))
+    if (partial.length > 0) return { inputName: name, mapping: partial[0], reason: null }
 
     return { inputName: name, mapping: null, reason: `"${name}" はマスターに未登録` }
   })
@@ -411,7 +562,7 @@ function buildPathPortalUrl(
 }
 
 // -------------------------------------------------------
-// 統合エントリポイント
+// 統合エントリポイント（旧マスターのみ・後方互換）
 // -------------------------------------------------------
 export function buildPortalUrl(
   portal: SiteKey,
@@ -423,6 +574,50 @@ export function buildPortalUrl(
     case 'athome': return buildPathPortalUrl('athome', cond, mappings)
     case 'homes':  return buildPathPortalUrl('homes',  cond, mappings)
   }
+}
+
+// -------------------------------------------------------
+// 統合エントリポイント V2（新マスター優先 + 旧マスターfallback）
+// -------------------------------------------------------
+export function buildPortalUrlV2(
+  portal: SiteKey,
+  cond: CustomerCondition,
+  newMaster: NewMasterData,
+  oldMappings: PortalAreaMapping[],
+  debugLog?: (msg: string) => void,
+): BuildResult {
+  // 新マスターで解決した結果を旧 PortalAreaMapping 互換の配列に変換して既存URLビルダーへ渡す
+  const resolved = resolveAreaNamesV2(cond.area, newMaster, oldMappings, portal, debugLog)
+
+  // resolved を PortalAreaMapping[] に展開し、既存 buildSuumoUrl / buildPathPortalUrl に食わせる
+  // → 新旧混在した仮想マッピング配列を作り、cond.area の各名前を display_name として格納する
+  const syntheticMappings: PortalAreaMapping[] = resolved
+    .filter(r => r.mapping != null)
+    .map(r => ({
+      ...r.mapping!,
+      // display_name を inputName に上書きすることで既存の完全一致ロジックが通る
+      display_name: r.inputName,
+    }))
+
+  debugLog?.(`[build] portal=${portal} 解決済み: [${resolved.filter(r=>r.mapping).map(r=>r.inputName).join(', ')}]`)
+  debugLog?.(`[build] 未解決: [${resolved.filter(r=>!r.mapping).map(r=>r.inputName).join(', ')}]`)
+
+  let result: BuildResult
+  switch (portal) {
+    case 'suumo':  result = buildSuumoUrl(cond, syntheticMappings); break
+    case 'athome': result = buildPathPortalUrl('athome', cond, syntheticMappings); break
+    case 'homes':  result = buildPathPortalUrl('homes',  cond, syntheticMappings); break
+  }
+
+  // 未解決エリアをマージ（重複排除）
+  const allUnresolved = [...new Set([
+    ...result.unresolvedAreas,
+    ...resolved.filter(r => !r.mapping).map(r => r.inputName),
+  ])]
+
+  debugLog?.(`[build] 生成URL: ${result.urls.map(u => u.url).join(' | ')}`)
+
+  return { ...result, unresolvedAreas: allUnresolved }
 }
 
 // -------------------------------------------------------
