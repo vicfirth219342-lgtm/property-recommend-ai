@@ -149,6 +149,34 @@ export function resolveAreaNames(
 // -------------------------------------------------------
 // SUUMO URL 生成
 // -------------------------------------------------------
+
+/**
+ * portal_url_param が SUUMO駅パス形式かどうか判定
+ * 例: "kanagawa/eki_musashikosugi" → true
+ *     "ta=14&sc=14133"             → false
+ */
+function isSuumoStationPath(param: string): boolean {
+  return /^[a-z]+\/eki_[a-z0-9]+$/.test(param)
+}
+
+/**
+ * 物件種別 × 売買/賃貸 → SUUMO駅パスURL用のパスセグメント
+ * 例: マンション売買 → "ms/chuko", 戸建賃貸 → "chintai/ikkodate"
+ */
+function suumoStationTypeSegment(propertyType: string | null, isSale: boolean): string {
+  const pt = propertyType ?? ''
+  if (isSale) {
+    if (pt.includes('新築') && pt.includes('マンション')) return 'ms/shinchiku'
+    if (pt.includes('新築') && (pt.includes('戸建') || pt.includes('一戸建'))) return 'ikkodate/shinchiku'
+    if (pt.includes('戸建') || pt.includes('一戸建')) return 'ikkodate/chuko'
+    if (pt.includes('土地')) return 'tochi'
+    return 'ms/chuko'
+  } else {
+    if (pt.includes('戸建') || pt.includes('一戸建')) return 'chintai/ikkodate'
+    return 'chintai/mansion'
+  }
+}
+
 function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): BuildResult {
   const isSale = cond.transaction_type !== 'rent'
   const resolved = resolveAreaNames(cond.area, mappings, 'suumo')
@@ -156,13 +184,46 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
   const resolvedAreas  = resolved.filter(r => r.mapping).map(r => r.inputName)
   const unresolvedAreas = resolved.filter(r => !r.mapping).map(r => r.inputName)
   const warnings: string[] = []
+  const urls: { url: string; label: string }[] = []
 
-  // マッチしたエントリから ta と sc/ek を抽出し、都道府県グループに集約
+  const tc  = suumoTypeCode(cond.property_type, isSale)
+  const wk  = suumoWalk(cond.walk_minutes_max)
+  const ag  = suumoAge(cond.building_age_max)
+
+  // ── 1. 駅パス形式エントリ（kanagawa/eki_musashikosugi 等）──────────
+  // 駅ごとに1URL生成。ekk= が正しく機能する。
+  const stationPathMatches = resolved.filter(r => r.mapping && isSuumoStationPath(r.mapping.portal_url_param))
+
+  for (const r of stationPathMatches) {
+    const path = r.mapping!.portal_url_param  // e.g. "kanagawa/eki_musashikosugi"
+    const typeSegment = suumoStationTypeSegment(cond.property_type, isSale)
+    const qParts: string[] = []
+    if (isSale) {
+      if (cond.budget_min) qParts.push(`kb=${cond.budget_min}`)
+      if (cond.budget_max) qParts.push(`kt=${cond.budget_max}`)
+    } else {
+      if (cond.rent_min) qParts.push(`cb=${cond.rent_min}`)
+      if (cond.rent_max) qParts.push(`ct=${cond.rent_max}`)
+    }
+    if (cond.area_sqm_min) qParts.push(`mb=${Math.floor(cond.area_sqm_min)}`)
+    if (cond.area_sqm_max) qParts.push(`mt=${Math.ceil(cond.area_sqm_max)}`)
+    if (wk) qParts.push(`ekk=${wk}`)
+    if (ag) qParts.push(`cn=${ag}`)
+    const qs = qParts.length > 0 ? `?${qParts.join('&')}` : ''
+    urls.push({
+      url: `https://suumo.jp/${typeSegment}/${path}/${qs}`,
+      label: `SUUMO ${r.inputName} ${isSale ? '売買' : '賃貸'}`,
+    })
+  }
+
+  // ── 2. ta+sc/ek 形式エントリ（都道府県グループ集約）─────────────────
   type Group = { ta: string; ar: string; codes: string[] }
   const groups = new Map<string, Group>()
 
   for (const r of resolved) {
     if (!r.mapping) continue
+    if (isSuumoStationPath(r.mapping.portal_url_param)) continue  // 上で処理済み
+
     const params = new URLSearchParams(r.mapping.portal_url_param)
     const ta = params.get('ta')
     const sc = params.get('sc')
@@ -172,27 +233,16 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
     const ar = SUUMO_AR[ta] ?? '030'
     if (!groups.has(ta)) groups.set(ta, { ta, ar, codes: [] })
     const g = groups.get(ta)!
-    if (sc) g.codes.push(`sc=${sc}`)
-    else if (ek) g.codes.push(`ek=${ek}`)
-  }
-
-  if (groups.size === 0) {
-    // エリア未指定 → 全国検索（tc + 価格・面積フィルターのみ）
-    if (cond.area) {
-      return {
-        urls: [], unresolvedAreas, resolvedAreas, warnings: ['エリアが解決できませんでした'],
-        canGenerate: false,
-      }
-    }
+    const code = sc ? `sc=${sc}` : ek ? `ek=${ek}` : null
+    // 重複除去（同一都道府県内で同じコードを複数回追加しない）
+    if (code && !g.codes.includes(code)) g.codes.push(code)
   }
 
   if (groups.size > 1) {
-    warnings.push(`複数の都道府県にまたがるため、都道府県ごとにURLを生成しました`)
+    warnings.push('複数の都道府県にまたがるため、都道府県ごとにURLを生成しました')
   }
 
-  const tc = suumoTypeCode(cond.property_type, isSale)
-
-  const urls = [...groups.values()].map(g => {
+  for (const g of groups.values()) {
     const base: Record<string, string> = {
       ar: g.ar,
       bs: isSale ? '010' : '040',
@@ -201,11 +251,8 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
     if (tc) base.tc = tc
 
     let qs = new URLSearchParams(base).toString()
-
-    // エリアコード（複数 sc/ek を並べる）
     for (const code of g.codes) qs += `&${code}`
 
-    // 価格
     if (isSale) {
       if (cond.budget_min) qs += `&kb=${cond.budget_min}`
       if (cond.budget_max) qs += `&kt=${cond.budget_max}`
@@ -213,17 +260,9 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
       if (cond.rent_min) qs += `&cb=${cond.rent_min}`
       if (cond.rent_max) qs += `&ct=${cond.rent_max}`
     }
-
-    // 面積
     if (cond.area_sqm_min) qs += `&mb=${Math.floor(cond.area_sqm_min)}`
     if (cond.area_sqm_max) qs += `&mt=${Math.ceil(cond.area_sqm_max)}`
-
-    // 徒歩
-    const wk = suumoWalk(cond.walk_minutes_max)
     if (wk) qs += `&${isSale ? 'ekk' : 'et'}=${wk}`
-
-    // 築年数
-    const ag = suumoAge(cond.building_age_max)
     if (ag) qs += `&cn=${ag}`
 
     const base_url = isSale
@@ -231,20 +270,23 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
       : 'https://suumo.jp/jj/chintai/ichiran/FR301FC001/'
 
     const matchedNames = resolved
-      .filter(r => r.mapping && new URLSearchParams(r.mapping.portal_url_param).get('ta') === g.ta)
+      .filter(r => r.mapping && !isSuumoStationPath(r.mapping.portal_url_param)
+        && new URLSearchParams(r.mapping.portal_url_param).get('ta') === g.ta)
       .map(r => r.inputName)
 
-    return {
+    urls.push({
       url: `${base_url}?${qs}`,
       label: `SUUMO ${matchedNames.join('・')} ${isSale ? '売買' : '賃貸'}`,
-    }
-  })
+    })
+  }
 
-  // エリア未指定（area 自体が null）の場合も基本URLを生成
-  if (urls.length === 0 && !cond.area) {
-    const base: Record<string, string> = {
-      ar: '030', bs: isSale ? '010' : '040',
+  // ── 3. エリアが解決できなかった場合 ──────────────────────────────────
+  if (urls.length === 0) {
+    if (cond.area) {
+      return { urls: [], unresolvedAreas, resolvedAreas, warnings: ['エリアが解決できませんでした'], canGenerate: false }
     }
+    // エリア未指定 → デフォルトフォールバック（関東）
+    const base: Record<string, string> = { ar: '030', bs: isSale ? '010' : '040' }
     if (tc) base.tc = tc
     let qs = new URLSearchParams(base).toString()
     if (isSale) {
@@ -255,9 +297,7 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
       if (cond.rent_max) qs += `&ct=${cond.rent_max}`
     }
     if (cond.area_sqm_min) qs += `&mb=${Math.floor(cond.area_sqm_min)}`
-    const wk = suumoWalk(cond.walk_minutes_max)
     if (wk) qs += `&${isSale ? 'ekk' : 'et'}=${wk}`
-    const ag = suumoAge(cond.building_age_max)
     if (ag) qs += `&cn=${ag}`
     const base_url = isSale
       ? 'https://suumo.jp/jj/bukken/ichiran/JJ010FJ001/'
@@ -266,13 +306,7 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
     urls.push({ url: `${base_url}?${qs}`, label: 'SUUMO 全国（エリア指定なし）' })
   }
 
-  return {
-    urls,
-    unresolvedAreas,
-    resolvedAreas,
-    warnings,
-    canGenerate: urls.length > 0,
-  }
+  return { urls, unresolvedAreas, resolvedAreas, warnings, canGenerate: urls.length > 0 }
 }
 
 // -------------------------------------------------------
