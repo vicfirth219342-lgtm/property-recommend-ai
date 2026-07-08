@@ -5,11 +5,14 @@ export interface ExtractedProperty {
   address?: string
   price_man?: number
   area_sqm?: number
+  floor_number?: number
   built_year?: number
   built_month?: number
   station?: string
   walk_minutes?: number
   floor_plan?: string
+  management_fee?: number
+  repair_fund?: number
   source_url?: string
 }
 
@@ -86,6 +89,21 @@ export function extractFromText(text: string): ExtractedProperty {
   // 間取り
   const floorMatch = text.match(/([1-9][SLDK]{1,4}(?:\+[SLDK]{1,2})?)/i)
   if (floorMatch) result.floor_plan = floorMatch[1].toUpperCase()
+
+  // 所在階（「16階」「3階部分」等。「地上XX階建」は除外）
+  const floorNumMatch = text.match(/(?:所在階|階数)[：:\s]*(\d+)階|(?<![地上]\d{1,2})(?<!\d)(\d+)階(?:部分|住戸|[^建])/)
+  if (floorNumMatch) {
+    const n = parseInt(floorNumMatch[1] ?? floorNumMatch[2])
+    if (n >= 1 && n <= 80) result.floor_number = n
+  }
+
+  // 管理費
+  const mgmtMatch = text.match(/管理費[：:\s]*([\d,]+)\s*円/)
+  if (mgmtMatch) result.management_fee = parseInt(mgmtMatch[1].replace(/,/g, ''))
+
+  // 修繕積立金
+  const repairMatch = text.match(/修繕積立金[：:\s]*([\d,]+)\s*円/)
+  if (repairMatch) result.repair_fund = parseInt(repairMatch[1].replace(/,/g, ''))
 
   // URL
   const urlMatch = text.match(/https?:\/\/[^\s\n\r"'<>]+/)

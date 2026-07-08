@@ -85,6 +85,11 @@ async function scrapeOnePage(page: import('playwright').Page, transactionType: i
       const roomMatch = name.match(/(\d+)号室?$/) ?? allText.match(/(\d{3,4})号室/)
       const room_number = roomMatch ? roomMatch[1] : null
 
+      const mgmtMatchA = allText.match(/管理費[：:\s]*([\d,]+)\s*円/)
+      const management_fee = mgmtMatchA ? parseInt(mgmtMatchA[1].replace(/,/g, '')) : null
+      const repairMatchA = allText.match(/修繕積立金[：:\s]*([\d,]+)\s*円/)
+      const repair_fund = repairMatchA ? parseInt(repairMatchA[1].replace(/,/g, '')) : null
+
       const builtRaw =
         allText.match(/(新築|築後未入居|(?:明治|大正|昭和|平成|令和)\d+年(?:\d+月)?|\d{4}年(?:\d+月)?|築\d+年)/)?.[0] ?? ''
       const { builtYear, builtMonth, buildingAge } = parseBuiltDate(builtRaw)
@@ -96,7 +101,7 @@ async function scrapeOnePage(page: import('playwright').Page, transactionType: i
         name, address,
         price: transactionType === 'sale' ? price : null,
         monthly_rent: transactionType === 'rent' ? price : null,
-        management_fee: null, repair_fund: null, yield_rate: null,
+        management_fee, repair_fund, yield_rate: null,
         land_area: null, building_area: null,
         key_money: null, deposit: null, guarantee_money: null,
         tsubo_count: null, tsubo_price: null, available_from: null,

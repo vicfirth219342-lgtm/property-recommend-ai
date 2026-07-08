@@ -82,7 +82,13 @@ async function scrapeOnePage(page: import('playwright').Page, transactionType: i
       const roomMatch = name.match(/(\d+)号室?$/) ?? allText.match(/(\d{3,4})号室/)
       const room_number = roomMatch ? roomMatch[1] : null
 
-      // 築年月: 「2001年3月」「平成18年5月」「築25年」「新築」等を統一パース
+      // 管理費・修繕積立金（円単位）
+      const mgmtMatch = allText.match(/管理費[：:\s]*([\d,]+)\s*円/)
+      const management_fee = mgmtMatch ? parseInt(mgmtMatch[1].replace(/,/g, '')) : null
+      const repairMatch = allText.match(/修繕積立金[：:\s]*([\d,]+)\s*円/)
+      const repair_fund = repairMatch ? parseInt(repairMatch[1].replace(/,/g, '')) : null
+
+      //築年月: 「2001年3月」「平成18年5月」「築25年」「新築」等を統一パース
       const builtRaw =
         allText.match(/(新築|築後未入居|(?:明治|大正|昭和|平成|令和)\d+年(?:\d+月)?|\d{4}年(?:\d+月)?|築\d+年)/)?.[0] ?? ''
       const { builtYear, builtMonth, buildingAge } = parseBuiltDate(builtRaw)
@@ -96,8 +102,8 @@ async function scrapeOnePage(page: import('playwright').Page, transactionType: i
         address,
         price: transactionType === 'sale' ? price : null,
         monthly_rent: transactionType === 'rent' ? price : null,
-        management_fee: null,
-        repair_fund: null,
+        management_fee,
+        repair_fund,
         yield_rate: null,
         land_area: null,
         building_area: null,

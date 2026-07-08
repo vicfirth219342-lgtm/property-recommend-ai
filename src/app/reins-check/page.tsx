@@ -1,16 +1,27 @@
 'use client'
 import { useState, useCallback, useEffect } from 'react'
 
+interface ScoreDetail {
+  item: string
+  earned: number
+  max: number
+  matched: boolean
+  reason?: string
+}
+
 interface ExtractedProperty {
   property_name?: string
   address?: string
   price_man?: number
   area_sqm?: number
+  floor_number?: number
   built_year?: number
   built_month?: number
   station?: string
   walk_minutes?: number
   floor_plan?: string
+  management_fee?: number
+  repair_fund?: number
   source_url?: string
   search_keywords?: string[]
 }
@@ -22,6 +33,7 @@ interface ReinsCheck extends ExtractedProperty {
   match_status: 'pending' | 'confirmed' | 'review' | 'not_found'
   matched_items: string[]
   unmatched_items: string[]
+  score_detail: ScoreDetail[] | null
   reins_input: string | null
   checked_at: string | null
   created_at: string
@@ -262,15 +274,18 @@ export default function ReinsCheckPage() {
             {extracted.map((p, i) => (
               <div key={i} className="px-4 py-3 border-t border-slate-100 text-sm">
                 <div className="grid grid-cols-2 gap-x-6 gap-y-1">
-                  {p.property_name && <div><span className="text-slate-400">物件名</span> {p.property_name}</div>}
-                  {p.address       && <div><span className="text-slate-400">住所</span> {p.address}</div>}
-                  {p.price_man     && <div><span className="text-slate-400">価格</span> {p.price_man.toLocaleString()}万円</div>}
-                  {p.area_sqm      && <div><span className="text-slate-400">面積</span> {p.area_sqm}㎡</div>}
-                  {p.floor_plan    && <div><span className="text-slate-400">間取り</span> {p.floor_plan}</div>}
+                  {p.property_name  && <div><span className="text-slate-400">物件名</span> {p.property_name}</div>}
+                  {p.address        && <div><span className="text-slate-400">住所</span> {p.address}</div>}
+                  {p.price_man      && <div><span className="text-slate-400">価格</span> {p.price_man.toLocaleString()}万円</div>}
+                  {p.area_sqm       && <div><span className="text-slate-400">面積</span> {p.area_sqm}㎡</div>}
+                  {p.floor_plan     && <div><span className="text-slate-400">間取り</span> {p.floor_plan}</div>}
+                  {p.floor_number   && <div><span className="text-slate-400">階数</span> {p.floor_number}階</div>}
                   {(p.built_year || p.built_month) && (
                     <div><span className="text-slate-400">築年月</span> {p.built_year}年{p.built_month ? `${p.built_month}月` : ''}</div>
                   )}
-                  {p.station       && <div><span className="text-slate-400">駅</span> {p.station} 徒歩{p.walk_minutes}分</div>}
+                  {p.station        && <div><span className="text-slate-400">駅</span> {p.station} 徒歩{p.walk_minutes}分</div>}
+                  {p.management_fee && <div><span className="text-slate-400">管理費</span> {p.management_fee.toLocaleString()}円</div>}
+                  {p.repair_fund    && <div><span className="text-slate-400">修繕積立金</span> {p.repair_fund.toLocaleString()}円</div>}
                 </div>
                 {p.search_keywords && p.search_keywords.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1">
@@ -336,51 +351,89 @@ export default function ReinsCheckPage() {
                 {/* 物件ヘッダー */}
                 <div className="px-4 py-3 flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
+                    {/* 物件名 + ステータスバッジ */}
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className="font-medium text-slate-800 truncate">
+                      <span className="font-medium text-slate-800">
                         {c.property_name ?? '（物件名なし）'}
                       </span>
-                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${st.color}`}>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${st.color}`}>
                         {st.label}
                       </span>
                       {c.match_score !== null && (
-                        <span className="text-xs text-slate-400">{c.match_score}点</span>
+                        <span className="text-xs text-slate-400 font-mono">{c.match_score}点 / 100点</span>
                       )}
                     </div>
-                    <div className="text-xs text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5">
-                      {c.address    && <span>{c.address}</span>}
-                      {c.price_man  && <span>{c.price_man.toLocaleString()}万円</span>}
-                      {c.area_sqm   && <span>{c.area_sqm}㎡</span>}
-                      {c.floor_plan && <span>{c.floor_plan}</span>}
-                      {c.station    && <span>{c.station} 徒歩{c.walk_minutes}分</span>}
+
+                    {/* 物件詳細情報 */}
+                    <div className="text-xs text-slate-500 flex flex-wrap gap-x-4 gap-y-0.5 mt-1">
+                      {c.address      && <span>📍 {c.address}</span>}
+                      {c.price_man    && <span>💴 {c.price_man.toLocaleString()}万円</span>}
+                      {c.area_sqm     && <span>📐 {c.area_sqm}㎡</span>}
+                      {c.floor_plan   && <span>🏠 {c.floor_plan}</span>}
+                      {c.floor_number && <span>{c.floor_number}階</span>}
+                      {c.station      && <span>🚉 {c.station} 徒歩{c.walk_minutes}分</span>}
+                      {(c.built_year || c.built_month) && (
+                        <span>🏗 {c.built_year}年{c.built_month ? `${c.built_month}月` : ''}築</span>
+                      )}
+                      {c.management_fee && <span>管理費 {c.management_fee.toLocaleString()}円</span>}
+                      {c.repair_fund    && <span>修繕 {c.repair_fund.toLocaleString()}円</span>}
                     </div>
-                    {/* 一致判定バー */}
+
+                    {/* 判定バー + 内訳 */}
                     {c.match_score !== null && (
-                      <div className="mt-2">
-                        <div className="h-1.5 bg-slate-100 rounded-full w-48">
-                          <div
-                            className={`h-1.5 rounded-full ${st.bar}`}
-                            style={{ width: `${c.match_score}%` }}
-                          />
+                      <div className="mt-3">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="h-2 bg-slate-100 rounded-full flex-1 max-w-[200px]">
+                            <div
+                              className={`h-2 rounded-full transition-all ${st.bar}`}
+                              style={{ width: `${Math.min(c.match_score, 100)}%` }}
+                            />
+                          </div>
+                          <span className={`text-xs font-medium ${
+                            c.match_status === 'confirmed' ? 'text-green-700' :
+                            c.match_status === 'review'    ? 'text-yellow-700' : 'text-red-600'
+                          }`}>
+                            {c.match_status === 'confirmed' && '→ 当社提案可能性あり'}
+                            {c.match_status === 'review'    && '→ 要確認'}
+                            {c.match_status === 'not_found' && '→ 元付・掲載元確認が必要'}
+                          </span>
                         </div>
-                        {c.matched_items?.length > 0 && (
-                          <div className="text-xs text-slate-400 mt-1">
-                            一致: {c.matched_items.join(' / ')}
+
+                        {/* スコア内訳テーブル */}
+                        {c.score_detail && c.score_detail.length > 0 && (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-1 mt-1">
+                            {c.score_detail.map(d => (
+                              <div
+                                key={d.item}
+                                className={`flex items-center gap-1 text-xs px-2 py-1 rounded ${
+                                  d.earned > 0
+                                    ? 'bg-green-50 text-green-700'
+                                    : d.reason === 'データなし'
+                                      ? 'bg-slate-50 text-slate-400'
+                                      : 'bg-red-50 text-red-600'
+                                }`}
+                              >
+                                <span>{d.earned > 0 ? '✓' : '✗'}</span>
+                                <span className="font-medium">{d.item}</span>
+                                <span className="ml-auto font-mono">
+                                  +{d.earned}<span className="opacity-50">/{d.max}</span>
+                                </span>
+                              </div>
+                            ))}
                           </div>
                         )}
-                        {c.unmatched_items?.length > 0 && (
-                          <div className="text-xs text-red-400 mt-0.5">
-                            不一致: {c.unmatched_items.join(' / ')}
+
+                        {/* 不一致理由 */}
+                        {c.score_detail && c.score_detail.filter(d => !d.matched && d.reason && d.reason !== 'データなし').length > 0 && (
+                          <div className="mt-1 text-xs text-red-400 space-y-0.5">
+                            {c.score_detail
+                              .filter(d => !d.matched && d.reason && d.reason !== 'データなし')
+                              .map(d => (
+                                <div key={d.item}>✗ {d.item}: {d.reason}</div>
+                              ))
+                            }
                           </div>
                         )}
-                        {/* 顧客提案との連携表示 */}
-                        <div className={`text-xs mt-1 font-medium ${
-                          c.match_status === 'confirmed' ? 'text-green-700' :
-                          c.match_status === 'not_found' ? 'text-orange-600' : 'text-slate-500'
-                        }`}>
-                          {c.match_status === 'confirmed' && '→ 当社提案可能性あり'}
-                          {c.match_status === 'not_found' && '→ 元付・掲載元確認が必要'}
-                        </div>
                       </div>
                     )}
                   </div>

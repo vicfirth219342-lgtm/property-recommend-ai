@@ -59,11 +59,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     .from('pending_reins_checks')
     .update({
       reins_input,
-      match_score: matchResult.score,
-      match_status: matchResult.status,
-      matched_items: matchResult.matched_items,
+      match_score:    matchResult.score,
+      match_status:   matchResult.status,
+      matched_items:  matchResult.matched_items,
       unmatched_items: matchResult.unmatched_items,
-      checked_at: new Date().toISOString(),
+      score_detail:   matchResult.score_detail,
+      checked_at:     new Date().toISOString(),
     })
     .eq('id', id)
     .select()
