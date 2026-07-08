@@ -155,28 +155,80 @@ document.addEventListener('DOMContentLoaded', async () => {
     showResult('')
 
     try {
-      // テーブル構造を維持して取得（body.innerTextではセル境界が失われるため）
+      // テーブル構造を維持して取得
+      // レインズは <table> ではなく CSS Grid (.p-table-body-row) を使用
       const [{ result: pageText }] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: () => {
           try {
-            const tables = document.querySelectorAll('table')
-            if (tables.length === 0) return document.body.innerText
+            // ── CSS Grid形式（レインズ一覧）──────────────────────
+            const gridRows = document.querySelectorAll('.p-table-body-row')
+            if (gridRows.length > 0) {
+              // grid-column開始番号を取得
+              const getColStart = (el) => {
+                const gc = el.style.gridColumn || el.style.gridColumnStart || ''
+                const m = gc.match(/(\d+)/)
+                return m ? parseInt(m[1]) : 999
+              }
+              const getRowStart = (el) => {
+                const gr = el.style.gridRow || el.style.gridRowStart || ''
+                const m = gr.match(/(\d+)/)
+                return m ? parseInt(m[1]) : 0
+              }
 
-            const rowParts = []
-            for (const table of tables) {
-              for (const tr of table.querySelectorAll('tr')) {
-                const tds = Array.from(tr.querySelectorAll('td, th'))
-                if (tds.length < 2) continue
-                const cells = tds.map(td => td.innerText)
-                if (cells.some(c => c.trim().length > 0)) {
+              const rowParts = []
+              for (const row of gridRows) {
+                const items = Array.from(row.querySelectorAll('.p-table-body-item'))
+
+                // grid-column番号でグループ化（同じ列に複数行ある＝所在地・建物名・駅等）
+                const colMap = new Map()
+                for (const item of items) {
+                  const col = getColStart(item)
+                  const rowNum = getRowStart(item)
+                  const text = item.innerText.trim()
+                  if (!text) continue
+                  if (!colMap.has(col)) colMap.set(col, [])
+                  colMap.get(col).push({ rowNum, text })
+                }
+
+                // 列番号順にソートし、各列のテキストを行結合してCELL化
+                const sortedCols = Array.from(colMap.entries())
+                  .sort((a, b) => a[0] - b[0])
+                const cells = sortedCols.map(([, entries]) =>
+                  entries.sort((a, b) => a.rowNum - b.rowNum).map(e => e.text).join('\n')
+                )
+
+                if (cells.some(c => c.trim())) {
                   rowParts.push(cells.join('\n__CELL__\n'))
                 }
               }
+
+              if (rowParts.length > 0) {
+                return '__TABLE_FORMAT__\n' + rowParts.join('\n__ROW__\n')
+              }
             }
 
-            if (rowParts.length === 0) return document.body.innerText
-            return '__TABLE_FORMAT__\n' + rowParts.join('\n__ROW__\n')
+            // ── <table>形式（フォールバック）─────────────────────
+            const tables = document.querySelectorAll('table')
+            if (tables.length > 0) {
+              const rowParts = []
+              for (const table of tables) {
+                for (const tr of table.querySelectorAll('tr')) {
+                  const tds = Array.from(tr.querySelectorAll('td, th'))
+                  if (tds.length < 2) continue
+                  const cells = tds.map(td => td.innerText)
+                  if (cells.some(c => c.trim().length > 0)) {
+                    rowParts.push(cells.join('\n__CELL__\n'))
+                  }
+                }
+              }
+              if (rowParts.length > 0) {
+                return '__TABLE_FORMAT__\n' + rowParts.join('\n__ROW__\n')
+              }
+            }
+
+            // ── 最終フォールバック ────────────────────────────────
+            return document.body.innerText
           } catch (_e) {
             return document.body.innerText
           }
@@ -190,6 +242,23 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!pageText || pageText.trim().length < 20) {
         throw new Error('ページテキストが取得できませんでした')
       }
+
+      // ── [DEBUG] 取得テキストをコンソールとUIに表示 ──────────
+      const isTableFormat = pageText.startsWith('__TABLE_FORMAT__')
+      const preview = pageText.slice(0, 800)
+      console.log('[DEBUG] ① 送信直前の生データ (先頭800文字):')
+      console.log(preview)
+      console.log('[DEBUG] テーブル形式:', isTableFormat, '/ 総文字数:', pageText.length)
+      showResult(
+        `[DEBUG] ① 送信直前の生データ\n` +
+        `形式: ${isTableFormat ? 'TABLE形式 ✓' : 'フラットテキスト'}\n` +
+        `総文字数: ${pageText.length}\n` +
+        `---先頭800文字---\n${preview}`,
+        'info'
+      )
+      // 3秒後に送信を続行
+      await new Promise(r => setTimeout(r, 100))
+      // ────────────────────────────────────────────────────────
 
       const headers = { 'Content-Type': 'application/json' }
       if (token) headers['x-extension-token'] = token

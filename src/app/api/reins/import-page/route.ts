@@ -86,6 +86,21 @@ export async function POST(req: NextRequest) {
 
   const pageOrder = (currentPageCount ?? 0) + 1
 
+  // ── [DEBUG] ② API受信直後のログ ────────────────────────────
+  const isTableFmt = text.includes('__TABLE_FORMAT__')
+  console.log(`[DEBUG] ② API受信: 文字数=${text.length} / TABLE形式=${isTableFmt}`)
+  console.log('[DEBUG] 先頭600文字:\n' + text.slice(0, 600))
+  // 最初の __ROW__ 区切りを確認
+  if (isTableFmt) {
+    const rows = text.split('\n__ROW__\n')
+    console.log(`[DEBUG] ROW数: ${rows.length}`)
+    const firstRow = rows[0] ?? ''
+    const cells = firstRow.split('\n__CELL__\n')
+    console.log(`[DEBUG] 1行目のCELL数: ${cells.length}`)
+    cells.forEach((c, i) => console.log(`[DEBUG] CELL[${i}]: ${c.slice(0, 100).replace(/\n/g, '\\n')}`))
+  }
+  // ────────────────────────────────────────────────────────────
+
   // ページを保存
   const { error: pageErr } = await supabase
     .from('reins_import_pages')

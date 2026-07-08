@@ -48,7 +48,10 @@ export function extractFromText(rawText: string): ExtractedProperty {
   const result: ExtractedProperty = {}
 
   const namePatterns = [
-    /物件名称?[：:\s]+(.+?)[\n\r]/,
+    // 「物件名 クレッセント武蔵中原IV」のようにラベルと値が同一行（コロン区切り）
+    /物件名称?[：:\s]+([^\n\r]{2,40})/,
+    // 「物件名\nクレッセント武蔵中原IV」のようにラベルと値が別行（テーブルセル）
+    /物件名称?\s*\n\s*([^\n\r]{2,40})/,
     /【(.+?)】/,
     /「(.+?)」/,
     /^(.{3,30}(?:マンション|タワー|レジデンス|コート|パーク|ヒルズ|ガーデン|プレイス|スクエア|テラス|ビル|ハウス)(?:[^\n\r]{0,15})?)/m,
@@ -191,6 +194,9 @@ const PREF_PATTERN = /^(東京都|神奈川県|大阪府|愛知県|千葉県|埼
 // ユーティリティ
 // ─────────────────────────────────────────────────────────────
 
+// レインズの取引態様として使われる語（建物名として誤判定しない）
+const TRANSACTION_TYPES = new Set(['売主', '専任', '一般', '代理', 'オーナーチェンジ', '共同仲介', '専属専任'])
+
 // 電話番号行かどうか（03-6427-9830 など）
 function isPhoneLine(s: string): boolean {
   return /^\d[\d\-－\s]{7,13}\d$/.test(s.trim())
@@ -201,7 +207,18 @@ function isDigitsOnlyLine(s: string): boolean {
   return /^[\d\s,，.．\-－＋]+$/.test(s.trim())
 }
 
-// 建物名として無効な値をフィルタ（null 返却）
+// 沿線・駅情報の行かどうか（「東横線 新丸子」「東急田園都市線」など）
+function isStationLine(s: string): boolean {
+  return /[線駅]/.test(s)
+}
+
+// 取引態様の行かどうか
+function isTransactionTypeLine(s: string): boolean {
+  return TRANSACTION_TYPES.has(s.trim())
+}
+
+// 建物名として無効な値をフィルタ（undefined を返す → 保存しない）
+// 以下のみ null 扱い: 空文字 / "-" / "（物件名なし）" / 取引態様 / 価格 / 面積 / 物件番号
 function sanitizePropertyName(name: string): string | undefined {
   const n = name.trim()
   if (!n) return undefined
@@ -209,6 +226,14 @@ function sanitizePropertyName(name: string): string | undefined {
   if (n === '（物件名なし）' || n === '(物件名なし)') return undefined
   // 12桁の物件番号はNG
   if (/^\d{12}$/.test(n)) return undefined
+  // 取引態様はNG（「一般」「専任」「売主」等）
+  if (isTransactionTypeLine(n)) return undefined
+  // 価格はNG（「6,980万円」「1億2,000万円」等）
+  if (/^\d[\d,，]*(?:億[\d,，]*)?万円?$/.test(n)) return undefined
+  // 面積はNG（「71.85㎡」等）
+  if (/^\d+(?:\.\d+)?㎡$/.test(n)) return undefined
+  // 間取りはNG（「3LDK」「2SLDK」等）
+  if (/^[1-9][SLDK]{1,5}$/.test(n)) return undefined
   return n
 }
 
@@ -269,33 +294,63 @@ function extractFromTableRow(cells: string[]): ReinsImportedProperty {
       .map(l => l.trim())
       .filter(l => l.length > 0)
 
+    // ── [DEBUG] ③ addrCell の内容を全行ログ ──────────────────
+    console.log(`[DEBUG] ③ addrCell発見 (${lines.length}行):`)
+    lines.forEach((l, i) => console.log(`  lines[${i}]: "${l}"`))
+    // ─────────────────────────────────────────────────────────
+
     // 1行目 = 所在地（都道府県から）
     if (lines[0]) result.address = lines[0]
 
-    // 2行目 = 建物名
-    // 電話番号・数字のみ・空は除外
-    if (lines.length >= 2) {
-      const candidate = lines[1]
-      if (!isPhoneLine(candidate) && !isDigitsOnlyLine(candidate)) {
-        result.property_name = sanitizePropertyName(candidate)
+    // 2行目〜: 建物名 / 取引態様 / 沿線駅 の判定
+    // レインズの所在地セルは「建物名なし」物件では 2行目が取引態様になる。
+    // そのため取引態様を見つけたら transaction_type に記録し、
+    // 次の行を建物名候補として再試行する。
+    let lineIdx = 1 // 現在検索中の行インデックス
+
+    // 建物名候補を lineIdx から探す（最大 lineIdx+1 まで）
+    for (let attempt = 0; attempt < 2 && lineIdx < lines.length; attempt++, lineIdx++) {
+      const candidate = lines[lineIdx]
+      if (!candidate || isPhoneLine(candidate) || isDigitsOnlyLine(candidate)) continue
+
+      // 取引態様の場合: transaction_type に記録して次の行へ
+      if (isTransactionTypeLine(candidate)) {
+        result.transaction_type = candidate
+        continue
+      }
+
+      // 沿線・駅行に到達したら建物名はない → ループ終了
+      if (isStationLine(candidate)) break
+
+      // 建物名として採用
+      const name = sanitizePropertyName(candidate)
+      if (name) {
+        result.property_name = name
+        lineIdx++ // 次の行へ
+      }
+      break
+    }
+
+    // 沿線・駅名行を探す
+    if (lineIdx < lines.length) {
+      for (let i = lineIdx; i < Math.min(lineIdx + 3, lines.length); i++) {
+        const stLine = lines[i]
+        if (isStationLine(stLine)) {
+          result.station = stLine
+          const walkMatch = stLine.match(/徒歩\s*(\d+)分/)
+          if (walkMatch) result.walk_minutes = parseInt(walkMatch[1])
+          lineIdx = i + 1
+          break
+        }
       }
     }
 
-    // 3行目 = 沿線・駅名
-    if (lines.length >= 3) {
-      const stLine = lines[2]
-      result.station = stLine
-      const walkMatch = stLine.match(/徒歩\s*(\d+)分/)
-      if (walkMatch) result.walk_minutes = parseInt(walkMatch[1])
-    }
-
-    // 4行目 = 元付会社（電話番号でなければ）
-    if (lines.length >= 4 && !isPhoneLine(lines[3])) {
-      result.agent_company = lines[3]
-    }
-    // 4行目が電話番号で5行目が会社名のケースに対応
-    if (lines.length >= 5 && !result.agent_company && !isPhoneLine(lines[4])) {
-      result.agent_company = lines[4]
+    // 元付会社（電話番号・駅行でなければ採用）
+    for (let i = lineIdx; i < Math.min(lineIdx + 3, lines.length); i++) {
+      const line = lines[i]
+      if (!line || isPhoneLine(line) || isStationLine(line)) continue
+      result.agent_company = line
+      break
     }
   }
 

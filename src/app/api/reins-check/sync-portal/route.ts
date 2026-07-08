@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
   if (property_ids && property_ids.length > 0) {
     const { data, error } = await supabase
       .from('properties')
-      .select('id, site, name, address, current_price, area_sqm, floor_plan, built_year, built_month, walk_minutes, url')
+      .select('id, site, name, address, current_price, area_sqm, floor_plan, floor_number, built_year, built_month, walk_minutes, url')
       .in('id', property_ids)
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
 
     let query = supabase
       .from('properties')
-      .select('id, site, name, address, current_price, area_sqm, floor_plan, built_year, built_month, walk_minutes, url')
+      .select('id, site, name, address, current_price, area_sqm, floor_plan, floor_number, built_year, built_month, walk_minutes, url')
       .order('first_seen_at', { ascending: false })
       .limit(500)
 
@@ -91,16 +91,17 @@ export async function POST(req: NextRequest) {
   }
 
   const rows = toInsert.map(p => ({
-    source_type: p.site as string,
-    portal_url:  p.url as string,
-    property_name: p.name as string,
-    address:     p.address as string ?? null,
-    price_man:   p.current_price != null ? Math.round((p.current_price as number) / 10000) : null,
-    area_sqm:    p.area_sqm as number ?? null,
-    floor_plan:  p.floor_plan as string ?? null,
-    built_year:  p.built_year as number ?? null,
-    built_month: p.built_month as number ?? null,
-    walk_minutes: p.walk_minutes as number ?? null,
+    source_type:   p.site as string,
+    portal_url:    p.url as string,
+    property_name: (p.name as string) || null,
+    address:       (p.address as string) || null,
+    price_man:     p.current_price != null ? Math.round((p.current_price as number) / 10000) : null,
+    area_sqm:      (p.area_sqm as number) || null,
+    floor_plan:    (p.floor_plan as string) || null,
+    floor_number:  (p.floor_number as number) || null,
+    built_year:    (p.built_year as number) || null,
+    built_month:   (p.built_month as number) || null,
+    walk_minutes:  (p.walk_minutes as number) || null,
     match_status: 'pending',
     search_keywords: buildSearchKeywords({
       property_name: p.name as string,

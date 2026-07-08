@@ -21,15 +21,23 @@ export async function POST(req: NextRequest) {
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const html = await res.text()
-      // タグを除去してテキストだけ残す
+      // ブロック要素の境界で改行を保持してテキスト化
+      // （改行を潰すと「物件名\nクレッセント...」→「物件名 クレッセント...」となりラベル認識が壊れる）
       textToExtract = html
         .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
         .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-        .replace(/<[^>]+>/g, ' ')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/(?:p|div|li|tr|td|th|h[1-6]|section|article|header|footer)[^>]*>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
         .replace(/&nbsp;/g, ' ')
         .replace(/&amp;/g, '&')
-        .replace(/\s{2,}/g, ' ')
-        .slice(0, 8000)  // 最大8000文字
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/[ \t]+/g, ' ')       // 水平方向の空白のみ圧縮（改行は保持）
+        .replace(/\n[ \t]+/g, '\n')    // 行頭空白を除去
+        .replace(/[ \t]+\n/g, '\n')    // 行末空白を除去
+        .replace(/\n{3,}/g, '\n\n')    // 3連続以上の改行を2つに圧縮
+        .slice(0, 12000)
     } catch (e) {
       return NextResponse.json({ error: `URLの取得に失敗しました: ${String(e)}` }, { status: 422 })
     }
