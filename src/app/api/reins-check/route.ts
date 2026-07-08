@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase'
 import { extractFromText, extractFromCsvRows, buildSearchKeywords, ExtractedProperty } from '@/lib/extractProperty'
 
+// Chrome拡張機能からのCORSプリフライト
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: corsHeaders() })
+}
+
 // GET: 一覧取得
 export async function GET() {
   const supabase = createServiceClient()
@@ -11,8 +16,16 @@ export async function GET() {
     .order('created_at', { ascending: false })
     .limit(100)
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders() })
+  return NextResponse.json(data, { headers: corsHeaders() })
+}
+
+function corsHeaders(): Record<string, string> {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, x-extension-token',
+  }
 }
 
 // POST: 物件を登録（抽出後の確定データ）

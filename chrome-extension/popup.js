@@ -47,7 +47,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 照合待ち物件リストを取得
   try {
-    const res = await fetch(`${apiBase}/api/reins-check`, {
+    const listUrl = `${apiBase}/api/reins-check`
+    console.log('[レインズ照合] 物件リスト取得URL:', listUrl)
+    const res = await fetch(listUrl, {
       headers: token ? { 'x-extension-token': token } : {},
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
