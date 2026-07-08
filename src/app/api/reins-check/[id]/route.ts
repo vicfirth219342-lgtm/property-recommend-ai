@@ -46,6 +46,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       address: original.address,
       price_man: original.price_man,
       area_sqm: original.area_sqm,
+      floor_number: original.floor_number,
       built_year: original.built_year,
       built_month: original.built_month,
       station: original.station,
@@ -54,6 +55,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     },
     reins_input
   )
+
+  // デバッグ用: レインズテキストから何が抽出されたかを返す
+  const { extractFromText } = await import('@/lib/extractProperty')
+  const extracted = extractFromText(reins_input)
 
   const { data, error } = await supabase
     .from('pending_reins_checks')
@@ -71,7 +76,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+  return NextResponse.json({ ...data, _extracted: extracted })
 }
 
 // DELETE: 削除

@@ -72,6 +72,8 @@ export default function ReinsCheckPage() {
   const [matching, setMatching] = useState(false)
 
   const [copied, setCopied] = useState<string | null>(null)
+  const [matchError, setMatchError] = useState('')
+  const [lastExtracted, setLastExtracted] = useState<ExtractedProperty | null>(null)
 
   // 一覧取得
   const loadChecks = useCallback(async () => {
@@ -156,15 +158,22 @@ export default function ReinsCheckPage() {
   async function matchReins(id: string) {
     if (!reinsInput.trim()) return
     setMatching(true)
+    setMatchError('')
+    setLastExtracted(null)
     const res = await fetch(`/api/reins-check/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reins_input: reinsInput }),
     })
+    const data = await res.json()
     if (res.ok) {
+      // サーバーが抽出したフィールドをデバッグ表示
+      if (data._extracted) setLastExtracted(data._extracted)
       setReinsInput('')
       setActiveCheckId(null)
       await loadChecks()
+    } else {
+      setMatchError(data.error ?? `エラー (HTTP ${res.status})`)
     }
     setMatching(false)
   }
@@ -487,13 +496,32 @@ export default function ReinsCheckPage() {
                       placeholder="レインズの検索結果テキストをここに貼り付け..."
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 font-mono resize-none mb-3"
                     />
-                    <button
-                      onClick={() => matchReins(c.id)}
-                      disabled={matching || !reinsInput.trim()}
-                      className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors"
-                    >
-                      {matching ? '照合中...' : '照合する'}
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => matchReins(c.id)}
+                        disabled={matching || !reinsInput.trim()}
+                        className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors"
+                      >
+                        {matching ? '照合中...' : '照合する'}
+                      </button>
+                      {matchError && (
+                        <span className="text-red-500 text-xs">{matchError}</span>
+                      )}
+                    </div>
+                    {/* デバッグ: レインズテキストから抽出できた内容 */}
+                    {lastExtracted && (
+                      <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900">
+                        <p className="font-medium mb-1">レインズテキストから抽出した内容（照合に使用）:</p>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+                          <span>物件名: {lastExtracted.property_name ?? '未抽出'}</span>
+                          <span>住所: {lastExtracted.address ?? '未抽出'}</span>
+                          <span>価格: {lastExtracted.price_man != null ? `${lastExtracted.price_man}万円` : '未抽出'}</span>
+                          <span>面積: {lastExtracted.area_sqm != null ? `${lastExtracted.area_sqm}㎡` : '未抽出'}</span>
+                          <span>間取り: {lastExtracted.floor_plan ?? '未抽出'}</span>
+                          <span>階数: {lastExtracted.floor_number != null ? `${lastExtracted.floor_number}階` : '未抽出'}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

@@ -28,15 +28,25 @@ function parsePrice(text: string): number | undefined {
   return parseInt(m[3].replace(/,/g, ''))
 }
 
+// 全角文字 → 半角に正規化（レインズは全角数字・全角カンマを使うため必須）
+function normalizeText(t: string): string {
+  return t
+    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFF10 + 0x30))  // 全角数字→半角
+    .replace(/，/g, ',')   // 全角カンマ→半角
+    .replace(/．/g, '.')   // 全角ピリオド→半角
+    .replace(/　/g, ' ')   // 全角スペース→半角（ラベル後のスペースに対応）
+}
+
 // テキストから物件情報を抽出
-export function extractFromText(text: string): ExtractedProperty {
+export function extractFromText(rawText: string): ExtractedProperty {
+  const text = normalizeText(rawText)
   const result: ExtractedProperty = {}
 
-  // 物件名: 【】「」または行頭のマンション名
+  // 物件名: レインズは「物件名称：」、ポータルは「物件名：」など
   const namePatterns = [
+    /物件名称?[：:\s]+(.+?)[\n\r]/,   // レインズ「物件名称：」・ポータル「物件名：」両対応
     /【(.+?)】/,
     /「(.+?)」/,
-    /物件名[：:\s]+(.+?)[\n\r]/,
     /^(.{3,30}(?:マンション|タワー|レジデンス|コート|パーク|ヒルズ|ガーデン|プレイス|スクエア|テラス|ビル|ハウス)(?:[^\n\r]{0,15})?)/m,
   ]
   for (const p of namePatterns) {
