@@ -16,22 +16,24 @@ export interface ExtractedProperty {
   source_url?: string
 }
 
-// 価格文字列 → 万円
+// 価格文字列 → 万円（カンマ入り "6,180万円" に対応）
 function parsePrice(text: string): number | undefined {
-  const m = text.match(/(\d+(?:,\d+)*)億(?:\s*(\d{1,4})万)?|(\d{1,4})万/)
+  const m = text.match(/(\d+(?:,\d+)*)億(?:\s*(\d+(?:,\d+)*)万)?|(\d+(?:,\d+)*)万/)
   if (!m) return undefined
   if (m[1]) {
     const oku = parseInt(m[1].replace(/,/g, '')) * 10000
-    const man = m[2] ? parseInt(m[2]) : 0
+    const man = m[2] ? parseInt(m[2].replace(/,/g, '')) : 0
     return oku + man
   }
   return parseInt(m[3].replace(/,/g, ''))
 }
 
-// 全角文字 → 半角に正規化（レインズは全角数字・全角カンマを使うため必須）
+// 全角文字 → 半角に正規化（レインズは全角数字・全角英字を使うため必須）
 function normalizeText(t: string): string {
   return t
     .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFF10 + 0x30))  // 全角数字→半角
+    .replace(/[Ａ-Ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFF21 + 0x41))  // 全角大文字→半角（ＬＤＫ等）
+    .replace(/[ａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFF41 + 0x61))  // 全角小文字→半角
     .replace(/，/g, ',')   // 全角カンマ→半角
     .replace(/．/g, '.')   // 全角ピリオド→半角
     .replace(/　/g, ' ')   // 全角スペース→半角（ラベル後のスペースに対応）
