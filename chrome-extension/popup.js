@@ -155,9 +155,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     showResult('')
 
     try {
+      // テーブル構造を維持して取得（body.innerTextではセル境界が失われるため）
       const [{ result: pageText }] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: () => document.body.innerText,
+        func: () => {
+          try {
+            const tables = document.querySelectorAll('table')
+            if (tables.length === 0) return document.body.innerText
+
+            const rowParts = []
+            for (const table of tables) {
+              for (const tr of table.querySelectorAll('tr')) {
+                const tds = Array.from(tr.querySelectorAll('td, th'))
+                if (tds.length < 2) continue
+                const cells = tds.map(td => td.innerText)
+                if (cells.some(c => c.trim().length > 0)) {
+                  rowParts.push(cells.join('\n__CELL__\n'))
+                }
+              }
+            }
+
+            if (rowParts.length === 0) return document.body.innerText
+            return '__TABLE_FORMAT__\n' + rowParts.join('\n__ROW__\n')
+          } catch (_e) {
+            return document.body.innerText
+          }
+        },
       })
       const [{ result: pageUrl }] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },

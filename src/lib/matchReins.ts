@@ -20,32 +20,24 @@ export interface MatchResult {
 // 正規化ユーティリティ
 // ─────────────────────────────────────────────────────────────
 
-// 物件名の正規化（表記揺れを統一して比較精度を上げる）
 function normalizePropertyName(name: string): string {
   return name
-    // 全角→半角（数字・英字）
     .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFF10 + 0x30))
     .replace(/[Ａ-Ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFF21 + 0x41))
     .replace(/[ａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFF41 + 0x61))
-    // ローマ数字 → アラビア数字
     .replace(/Ⅰ/g, 'I').replace(/Ⅱ/g, 'II').replace(/Ⅲ/g, 'III')
     .replace(/Ⅳ/g, 'IV').replace(/Ⅴ/g, 'V').replace(/Ⅵ/g, 'VI')
-    // THE / ザ → 統一（大文字THE）
     .replace(/^(ザ|ｻﾞ)[・･\s]*/i, 'THE ')
-    // 区切り文字の正規化
-    .replace(/[・･]/g, '')       // ・を削除
-    .replace(/[－ー−—―]/g, '-') // 長音符・ダッシュを半角ハイフンに
-    // ヶ/ケ/ヵ/カ の揺れを統一
+    .replace(/[・･]/g, '')
+    .replace(/[－ー−—―]/g, '-')
     .replace(/ヶ|ヵ/g, 'ケ')
-    // スペースをすべて削除（全角半角含む）
     .replace(/[\s　]+/g, '')
     .toLowerCase()
 }
 
-// 住所の正規化（都道府県除去 + 表記揺れ統一）
 function normalizeAddress(addr: string): string {
   return addr
-    .replace(/^(東京都|北海道|(?:大阪|京都|[^\s]{2})府|[^\s]{2,4}県)/, '') // 都道府県を除去
+    .replace(/^(東京都|北海道|(?:大阪|京都|[^\s]{2})府|[^\s]{2,4}県)/, '')
     .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFF10 + 0x30))
     .replace(/丁目/g, '-').replace(/番地?/g, '-').replace(/号/g, '')
     .replace(/[-－−]{2,}/g, '-')
@@ -53,31 +45,28 @@ function normalizeAddress(addr: string): string {
     .trim()
 }
 
-// 住所が都道府県のみで実用的な情報がないかチェック
 function isVagueAddress(addr: string): boolean {
   const withoutPref = addr.replace(/^(東京都|北海道|(?:大阪|京都|[^\s]{2})府|[^\s]{2,4}県)/, '').trim()
   return withoutPref.length < 3
 }
 
-// 住所から町丁名を抽出
 function extractTown(addr: string): string {
   return addr.match(/([^\s　]{2,6}[町丁目][\d\-―—〜０-９]+|[^\s　]{2,8}[町丁])/)?.[0] ?? ''
 }
 
-// 文字列の類似度（共通n-gram方式 — 物件名の部分一致に強い）
 function similarity(a: string, b: string): number {
   if (!a || !b) return 0
   if (a === b) return 1
   if (a.includes(b) || b.includes(a)) return 0.9
-  // 共通文字の割合（単純版）
   let common = 0
   for (const ch of a) if (b.includes(ch)) common++
   return (common * 2) / (a.length + b.length)
 }
 
 // ─────────────────────────────────────────────────────────────
-// スコアリング共通エンジン
-// 配点: 物件名25 / 所在地25 / 価格15 / 専有面積15 / 間取り10 / 階数5 / 築年月5 = 100pt
+// スコアリングエンジン
+//
+// 配点: 物件名40 / 所在地25 / 専有面積15 / 間取り10 / 階数5 / 価格5 = 100pt
 // 閾値: 85以上→confirmed / 60以上→review / 59以下→not_found
 // ─────────────────────────────────────────────────────────────
 
@@ -90,7 +79,7 @@ interface PropertyForScoring {
   floor_number?: number | null
   built_year?: number | null
   built_month?: number | null
-  reins_number?: string | null  // 物件番号（存在する場合は最優先）
+  reins_number?: string | null
 }
 
 function scoreProperties(portal: PropertyForScoring, reins: PropertyForScoring): MatchResult {
@@ -114,24 +103,24 @@ function scoreProperties(portal: PropertyForScoring, reins: PropertyForScoring):
   const unmatched: string[] = []
   const detail: ScoreDetail[] = []
 
-  // ── 物件名 25pt ──────────────────────────────────────────
+  // ── 物件名 40pt（最重要項目） ──────────────────────────
   const pName = portal.property_name ? normalizePropertyName(portal.property_name) : null
   const rName = reins.property_name  ? normalizePropertyName(reins.property_name)  : null
   if (pName && rName) {
     const sim = similarity(pName, rName)
     if (sim >= 0.8) {
-      score += 25; matched.push('物件名')
-      detail.push({ item: '物件名', earned: 25, max: 25, matched: true, reason: `類似度 ${Math.round(sim*100)}%` })
+      score += 40; matched.push('物件名')
+      detail.push({ item: '物件名', earned: 40, max: 40, matched: true, reason: `類似度 ${Math.round(sim*100)}%` })
     } else if (sim >= 0.5) {
-      score += 12; matched.push('物件名（部分一致）')
-      detail.push({ item: '物件名', earned: 12, max: 25, matched: true, reason: `部分一致 ${Math.round(sim*100)}%` })
+      score += 20; matched.push('物件名（部分一致）')
+      detail.push({ item: '物件名', earned: 20, max: 40, matched: true, reason: `部分一致 ${Math.round(sim*100)}%` })
     } else {
       unmatched.push('物件名')
-      detail.push({ item: '物件名', earned: 0, max: 25, matched: false, reason: `不一致（類似度 ${Math.round(sim*100)}%）` })
+      detail.push({ item: '物件名', earned: 0, max: 40, matched: false, reason: `不一致（類似度 ${Math.round(sim*100)}%）` })
     }
   } else {
-    detail.push({ item: '物件名', earned: 0, max: 25, matched: false,
-      reason: `未取得のため0点（SUUMO側:${pName ? '取得済' : '未取得'} / レインズ側:${rName ? '取得済' : '未取得'}）` })
+    detail.push({ item: '物件名', earned: 0, max: 40, matched: false,
+      reason: `未取得（ポータル:${pName ? '取得済' : '未取得'} / レインズ:${rName ? '取得済' : '未取得'}）` })
   }
 
   // ── 所在地 25pt ──────────────────────────────────────────
@@ -139,9 +128,8 @@ function scoreProperties(portal: PropertyForScoring, reins: PropertyForScoring):
   const rAddr = reins.address ?? null
   if (pAddr && rAddr) {
     if (isVagueAddress(pAddr)) {
-      // 都道府県のみは0点
       detail.push({ item: '所在地', earned: 0, max: 25, matched: false,
-        reason: `SUUMO側が「${pAddr}」のみで詳細不明のため0点` })
+        reason: `ポータル側が「${pAddr}」のみで詳細不明のため0点` })
       unmatched.push('所在地')
     } else {
       const na = normalizeAddress(pAddr)
@@ -156,7 +144,6 @@ function scoreProperties(portal: PropertyForScoring, reins: PropertyForScoring):
           score += 15; matched.push('所在地（町名一致）')
           detail.push({ item: '所在地', earned: 15, max: 25, matched: true, reason: `町名「${town}」一致` })
         } else {
-          // 市区町村だけでも一致すれば部分点
           const ward = pAddr.match(/[^\s]{2,6}[市区町村]/)?.[0]
           if (ward && rAddr.includes(ward)) {
             score += 8; matched.push('所在地（市区一致）')
@@ -171,28 +158,6 @@ function scoreProperties(portal: PropertyForScoring, reins: PropertyForScoring):
     }
   } else {
     detail.push({ item: '所在地', earned: 0, max: 25, matched: false, reason: 'データなし' })
-  }
-
-  // ── 価格 15pt（±3%以内） ─────────────────────────────
-  if (portal.price_man && reins.price_man) {
-    const diff = Math.abs(portal.price_man - reins.price_man)
-    const pct  = diff / portal.price_man
-    if (pct <= 0.03) {
-      score += 15; matched.push('価格')
-      detail.push({ item: '価格', earned: 15, max: 15, matched: true,
-        reason: `${portal.price_man.toLocaleString()}万円 ≒ ${reins.price_man.toLocaleString()}万円（差 ${diff}万 / ${(pct*100).toFixed(1)}%）` })
-    } else if (pct <= 0.10) {
-      score += 7; matched.push('価格（近似）')
-      detail.push({ item: '価格', earned: 7, max: 15, matched: true,
-        reason: `差額 ${diff}万円（${(pct*100).toFixed(1)}%）— 3%超のため部分点` })
-    } else {
-      unmatched.push('価格')
-      detail.push({ item: '価格', earned: 0, max: 15, matched: false,
-        reason: `${portal.price_man.toLocaleString()}万 vs ${reins.price_man.toLocaleString()}万（差 ${diff}万 / ${(pct*100).toFixed(1)}%）` })
-    }
-  } else {
-    detail.push({ item: '価格', earned: 0, max: 15, matched: false,
-      reason: `データなし（SUUMO:${portal.price_man ?? '未取得'} / レインズ:${reins.price_man ?? '未取得'}）` })
   }
 
   // ── 専有面積 15pt（±2㎡以内） ────────────────────────
@@ -213,10 +178,10 @@ function scoreProperties(portal: PropertyForScoring, reins: PropertyForScoring):
     }
   } else {
     detail.push({ item: '専有面積', earned: 0, max: 15, matched: false,
-      reason: `データなし（SUUMO:${pArea ?? '未取得'}㎡ / レインズ:${rArea ?? '未取得'}㎡）` })
+      reason: `データなし（ポータル:${pArea ?? '未取得'}㎡ / レインズ:${rArea ?? '未取得'}㎡）` })
   }
 
-  // ── 間取り 10pt（全角半角・スペース統一済みで比較） ──
+  // ── 間取り 10pt ──────────────────────────────────────────
   const pPlan = portal.floor_plan?.replace(/\s/g, '').toUpperCase() ?? null
   const rPlan = reins.floor_plan?.replace(/\s/g, '').toUpperCase() ?? null
   if (pPlan && rPlan) {
@@ -225,14 +190,13 @@ function scoreProperties(portal: PropertyForScoring, reins: PropertyForScoring):
       detail.push({ item: '間取り', earned: 10, max: 10, matched: true, reason: `${pPlan} 一致` })
     } else {
       unmatched.push('間取り')
-      detail.push({ item: '間取り', earned: 0, max: 10, matched: false,
-        reason: `${pPlan} vs ${rPlan}` })
+      detail.push({ item: '間取り', earned: 0, max: 10, matched: false, reason: `${pPlan} vs ${rPlan}` })
     }
   } else {
     detail.push({ item: '間取り', earned: 0, max: 10, matched: false, reason: 'データなし' })
   }
 
-  // ── 階数 5pt（「7階」「7F」「所在階7階」を同一扱い） ─
+  // ── 階数 5pt ─────────────────────────────────────────────
   const pFloor = portal.floor_number ?? null
   const rFloor = reins.floor_number  ?? null
   if (pFloor && rFloor) {
@@ -241,53 +205,47 @@ function scoreProperties(portal: PropertyForScoring, reins: PropertyForScoring):
       detail.push({ item: '階数', earned: 5, max: 5, matched: true, reason: `${pFloor}階 一致` })
     } else {
       unmatched.push('階数')
-      detail.push({ item: '階数', earned: 0, max: 5, matched: false,
-        reason: `${pFloor}階 vs ${rFloor}階` })
+      detail.push({ item: '階数', earned: 0, max: 5, matched: false, reason: `${pFloor}階 vs ${rFloor}階` })
     }
   } else {
     detail.push({ item: '階数', earned: 0, max: 5, matched: false,
-      reason: `データなし（SUUMO:${pFloor ?? '未取得'}階 / レインズ:${rFloor ?? '未取得'}階）` })
+      reason: `データなし（ポータル:${pFloor ?? '未取得'}階 / レインズ:${rFloor ?? '未取得'}階）` })
   }
 
-  // ── 築年月 5pt ───────────────────────────────────────
-  const pYear  = portal.built_year  ?? null
-  const rYear  = reins.built_year   ?? null
-  const pMonth = portal.built_month ?? null
-  const rMonth = reins.built_month  ?? null
-  if (pYear && rYear) {
-    if (pYear === rYear) {
-      if (!pMonth || !rMonth || pMonth === rMonth) {
-        score += 5; matched.push('築年月')
-        detail.push({ item: '築年月', earned: 5, max: 5, matched: true,
-          reason: `${pYear}年${pMonth ? pMonth + '月' : ''} 一致` })
-      } else {
-        score += 3; matched.push('築年（月違い）')
-        detail.push({ item: '築年月', earned: 3, max: 5, matched: true,
-          reason: `${pYear}年は一致（月: ${pMonth}月 vs ${rMonth}月）` })
-      }
+  // ── 価格 5pt（±3%以内） ───────────────────────────────
+  if (portal.price_man && reins.price_man) {
+    const diff = Math.abs(portal.price_man - reins.price_man)
+    const pct  = diff / portal.price_man
+    if (pct <= 0.03) {
+      score += 5; matched.push('価格')
+      detail.push({ item: '価格', earned: 5, max: 5, matched: true,
+        reason: `${portal.price_man.toLocaleString()}万円 ≒ ${reins.price_man.toLocaleString()}万円（差 ${diff}万 / ${(pct*100).toFixed(1)}%）` })
+    } else if (pct <= 0.10) {
+      score += 2; matched.push('価格（近似）')
+      detail.push({ item: '価格', earned: 2, max: 5, matched: true,
+        reason: `差額 ${diff}万円（${(pct*100).toFixed(1)}%）— 3%超のため部分点` })
     } else {
-      unmatched.push('築年月')
-      detail.push({ item: '築年月', earned: 0, max: 5, matched: false,
-        reason: `${pYear}年 vs ${rYear}年` })
+      unmatched.push('価格')
+      detail.push({ item: '価格', earned: 0, max: 5, matched: false,
+        reason: `${portal.price_man.toLocaleString()}万 vs ${reins.price_man.toLocaleString()}万（差 ${diff}万 / ${(pct*100).toFixed(1)}%）` })
     }
   } else {
-    detail.push({ item: '築年月', earned: 0, max: 5, matched: false,
-      reason: `データなし（SUUMO:${pYear ? pYear + '年' : '未取得'} / レインズ:${rYear ? rYear + '年' : '未取得'}）` })
+    detail.push({ item: '価格', earned: 0, max: 5, matched: false,
+      reason: `データなし（ポータル:${portal.price_man ?? '未取得'} / レインズ:${reins.price_man ?? '未取得'}）` })
   }
 
-  // ── データ不足チェック ──────────────────────────────────
-  // 物件名・所在地・専有面積のいずれも取れていない場合は confirmed を禁止（要確認止まり）
-  const nameMatched    = detail.find(d => d.item === '物件名')?.matched ?? false
-  const addrMatched    = detail.find(d => d.item === '所在地')?.matched ?? false
-  const areaAvailable  = (portal.area_sqm != null && reins.area_sqm != null)
-  const nameAvailable  = !!(pName && rName)
-  const addrAvailable  = !!(pAddr && rAddr && !isVagueAddress(pAddr))
+  // ── データ不足チェック ────────────────────────────────────
+  // 物件名・所在地・専有面積のいずれも取れていない場合は confirmed を禁止
+  const nameMatched   = detail.find(d => d.item === '物件名')?.matched ?? false
+  const addrMatched   = detail.find(d => d.item === '所在地')?.matched ?? false
+  const areaAvailable = (pArea != null && rArea != null)
+  const nameAvailable = !!(pName && rName)
+  const addrAvailable = !!(pAddr && rAddr && !isVagueAddress(pAddr))
 
-  // 識別項目（物件名 OR 所在地 OR 専有面積）のどれも取れていない → 要確認上限
   const hasIdentifier = nameAvailable || addrAvailable || areaAvailable
   // 価格のみ一致で他が全て不一致 → confirmed にしない
   const onlyPriceMatched = matched.length > 0 && matched.every(m => m.startsWith('価格'))
-  // 物件名と所在地が両方不一致 → confirmed にしない
+  // 物件名・所在地が両方不一致 → confirmed にしない
   const noNameAndAddr = !nameMatched && !addrMatched
 
   let status: MatchResult['status']
@@ -299,12 +257,11 @@ function scoreProperties(portal: PropertyForScoring, reins: PropertyForScoring):
     status = 'not_found'
   }
 
-  // データ不足の場合はスコア内訳に注記を追加
   if (!hasIdentifier) {
     detail.push({
       item: 'データ不足',
       earned: 0, max: 0, matched: false,
-      reason: '物件名・所在地・専有面積のいずれも取得できていないため、高スコアでも要確認止まりです',
+      reason: '物件名・所在地・専有面積のいずれも取得できていないため要確認止まり',
     })
   }
 
@@ -312,10 +269,9 @@ function scoreProperties(portal: PropertyForScoring, reins: PropertyForScoring):
 }
 
 // ─────────────────────────────────────────────────────────────
-// 公開API
+// 公開 API
 // ─────────────────────────────────────────────────────────────
 
-// 手動照合（旧来の PATCH 方式で使用）
 export function matchProperties(
   original: ExtractedProperty,
   candidate: ExtractedProperty
@@ -323,7 +279,6 @@ export function matchProperties(
   return scoreProperties(original, candidate)
 }
 
-// 一括取り込み方式（Chrome拡張 → import-results）
 export function matchPortalWithReins(
   portal: ExtractedProperty & { reins_number?: string | null },
   reins: ReinsImportedProperty
@@ -360,7 +315,6 @@ export interface BatchMatchResult {
   result: MatchResult
 }
 
-// ポータル物件1件 vs レインズ取り込み物件N件 → 最高スコアの1件を返す
 export function findBestReinsMatch(
   portal: ExtractedProperty & { reins_number?: string | null },
   reinsList: ReinsImportedProperty[]
@@ -386,10 +340,6 @@ export function findBestReinsMatch(
   }
   return { bestReins, result: bestResult }
 }
-
-// ─────────────────────────────────────────────────────────────
-// 手動貼り付け方式（後方互換）
-// ─────────────────────────────────────────────────────────────
 
 export function matchFromReinsText(
   original: ExtractedProperty,
