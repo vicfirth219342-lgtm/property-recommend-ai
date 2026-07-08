@@ -74,6 +74,7 @@ export default function ReinsCheckPage() {
   const [copied, setCopied] = useState<string | null>(null)
   const [matchError, setMatchError] = useState('')
   const [lastExtracted, setLastExtracted] = useState<ExtractedProperty | null>(null)
+  const [reinsUrlDetected, setReinsUrlDetected] = useState<string | null>(null)
 
   // 一覧取得
   const loadChecks = useCallback(async () => {
@@ -152,6 +153,17 @@ export default function ReinsCheckPage() {
       await loadChecks()
     }
     setSaving(false)
+  }
+
+  // レインズ入力変更時にURLを検出
+  function handleReinsInputChange(value: string) {
+    setReinsInput(value)
+    const trimmed = value.trim()
+    if (/^https?:\/\/[^\s]+/.test(trimmed)) {
+      setReinsUrlDetected(trimmed)
+    } else {
+      setReinsUrlDetected(null)
+    }
   }
 
   // レインズ結果を照合
@@ -491,11 +503,43 @@ export default function ReinsCheckPage() {
                     </p>
                     <textarea
                       value={reinsInput}
-                      onChange={e => setReinsInput(e.target.value)}
+                      onChange={e => handleReinsInputChange(e.target.value)}
                       rows={6}
-                      placeholder="レインズの検索結果テキストをここに貼り付け..."
+                      placeholder="レインズの検索結果URLまたはテキストをここに貼り付け..."
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 font-mono resize-none mb-3"
                     />
+                    {/* URL検出時のヘルパー */}
+                    {reinsUrlDetected && (
+                      <div className="mb-3 p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+                        <p className="font-medium text-blue-800 mb-2">🔗 URLが検出されました</p>
+                        <p className="text-blue-700 text-xs mb-3">
+                          レインズはログイン認証があるため、URLから直接取得できません。<br />
+                          以下の手順でテキストをコピーして、上のテキストエリアに貼り付けてください。
+                        </p>
+                        <ol className="text-xs text-blue-700 space-y-1 mb-3 list-decimal list-inside">
+                          <li>下の「レインズを開く」ボタンをクリック（ログイン済みのまま開きます）</li>
+                          <li>開いたページで <kbd className="bg-white border border-blue-300 rounded px-1">⌘A</kbd> で全選択</li>
+                          <li><kbd className="bg-white border border-blue-300 rounded px-1">⌘C</kbd> でコピー</li>
+                          <li>上のテキストエリアに貼り付けて「照合する」を押す</li>
+                        </ol>
+                        <div className="flex gap-2">
+                          <a
+                            href={reinsUrlDetected}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="bg-blue-600 text-white px-4 py-1.5 rounded-lg text-xs font-medium hover:bg-blue-700 transition-colors"
+                          >
+                            レインズを開く →
+                          </a>
+                          <button
+                            onClick={() => { setReinsInput(''); setReinsUrlDetected(null) }}
+                            className="text-xs text-blue-500 hover:text-blue-700 border border-blue-300 px-3 py-1.5 rounded-lg"
+                          >
+                            クリアしてテキストを貼り付ける
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     <div className="flex items-center gap-3">
                       <button
                         onClick={() => matchReins(c.id)}
