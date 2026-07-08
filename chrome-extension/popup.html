@@ -100,14 +100,18 @@
 
     <!-- 接続先URL表示 -->
     <div id="apiUrlBar" style="
-      font-size:10px; padding:5px 8px; border-radius:5px; margin-bottom:10px;
+      font-size:10px; padding:5px 8px; border-radius:5px; margin-bottom:6px;
       background:#f1f5f9; color:#64748b; word-break:break-all; display:none;
     ">
       <span style="color:#94a3b8;">接続先API: </span><span id="apiUrlText"></span>
-      <span id="previewUrlWarn" style="display:none; color:#dc2626; font-weight:700;">
-        ⚠ Preview URL — CORSエラーの原因です。設定を修正してください。
-      </span>
     </div>
+
+    <!-- Preview URL警告（強調表示） -->
+    <div id="previewUrlWarn" style="
+      display:none; font-size:11px; line-height:1.6;
+      background:#fef2f2; border:1px solid #fca5a5; border-radius:6px;
+      padding:9px 10px; margin-bottom:10px; color:#b91c1c;
+    "></div>
 
     <div id="mainContent">
 

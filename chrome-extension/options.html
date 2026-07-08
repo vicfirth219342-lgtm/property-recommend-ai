@@ -4,40 +4,84 @@
   <meta charset="UTF-8">
   <title>レインズ照合ツール - 設定</title>
   <style>
-    body { font-family: sans-serif; padding: 24px; min-width: 400px; color: #1e293b; }
+    body { font-family: -apple-system, 'Hiragino Sans', sans-serif; padding: 24px; min-width: 420px; color: #1e293b; }
     h1 { font-size: 16px; font-weight: 600; margin-bottom: 20px; }
-    label { display: block; font-size: 13px; color: #475569; margin-bottom: 4px; }
+    label { display: block; font-size: 13px; color: #475569; margin-bottom: 4px; font-weight: 500; }
     input[type="text"], input[type="password"] {
       width: 100%; box-sizing: border-box;
       border: 1px solid #cbd5e1; border-radius: 6px;
-      padding: 8px 10px; font-size: 13px; margin-bottom: 14px;
+      padding: 8px 10px; font-size: 13px; margin-bottom: 6px;
     }
-    input:focus { outline: none; border-color: #3b82f6; }
-    button {
+    input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px #bfdbfe; }
+    .hint { font-size: 11px; color: #94a3b8; margin-bottom: 14px; line-height: 1.5; }
+    .btn-save {
       background: #1e40af; color: white; border: none;
-      padding: 8px 20px; border-radius: 6px; font-size: 13px;
-      cursor: pointer;
+      padding: 9px 22px; border-radius: 6px; font-size: 13px;
+      cursor: pointer; font-weight: 600;
     }
-    button:hover { background: #1d4ed8; }
-    #status { margin-top: 12px; font-size: 13px; color: #16a34a; }
-    .hint { font-size: 11px; color: #94a3b8; margin-top: -10px; margin-bottom: 14px; }
+    .btn-save:hover { background: #1d4ed8; }
+    .btn-reset {
+      background: white; color: #dc2626; border: 1px solid #fca5a5;
+      padding: 9px 18px; border-radius: 6px; font-size: 13px;
+      cursor: pointer; margin-left: 8px;
+    }
+    .btn-reset:hover { background: #fef2f2; }
+    #status { margin-top: 12px; font-size: 13px; color: #16a34a; min-height: 20px; }
+    .warning-box {
+      background: #fef2f2; border: 1px solid #fca5a5;
+      border-radius: 8px; padding: 12px; font-size: 12px;
+      color: #b91c1c; margin-bottom: 16px; line-height: 1.7;
+      display: none;
+    }
+    .warning-box code { background: #fee2e2; padding: 1px 4px; border-radius: 3px; word-break: break-all; }
+    .btn-autofix {
+      display: none; background: #dc2626; color: white; border: none;
+      padding: 7px 16px; border-radius: 6px; font-size: 12px;
+      cursor: pointer; margin-bottom: 14px; font-weight: 600;
+    }
+    .current-url-box {
+      background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;
+      padding: 10px; font-size: 11px; color: #64748b; margin-bottom: 16px;
+      word-break: break-all;
+    }
+    .current-url-box strong { color: #1e293b; }
+    hr { border: none; border-top: 1px solid #e2e8f0; margin: 20px 0; }
   </style>
 </head>
 <body>
   <h1>レインズ照合ツール 設定</h1>
 
-  <label>照合アプリのURL（本番URLを指定してください）</label>
+  <!-- 現在の設定表示 -->
+  <div id="currentUrlBox" class="current-url-box" style="display:none">
+    現在の接続先: <strong id="currentUrlDisplay"></strong>
+  </div>
+
+  <!-- Preview URL警告 -->
+  <div id="previewWarning" class="warning-box"></div>
+  <button id="fixBtn" class="btn-autofix">▶ Preview URLを本番URLに自動修正</button>
+
+  <label>照合アプリのURL（本番URLを入力）</label>
   <input type="text" id="apiBase" placeholder="https://property-recommend-ai.vercel.app" />
-  <p class="hint">末尾スラッシュなし。<strong>-git-main- を含むPreview URLは使用不可</strong>（CORSエラー）</p>
-  <div id="previewWarning" style="display:none; background:#fef2f2; border:1px solid #fca5a5; border-radius:6px; padding:10px; font-size:12px; color:#b91c1c; margin-bottom:12px; line-height:1.6;"></div>
-  <button id="fixBtn" style="display:none; background:#dc2626; margin-bottom:12px;">Preview URLを自動修正</button>
+  <p class="hint">
+    ⚠ <code>-git-main-</code> を含む <strong>Preview URLは使用不可</strong>（CORSエラーの原因）<br>
+    Vercel ダッシュボード → プロジェクト → Domains に表示される短いURLを使用してください。
+  </p>
 
   <label>APIトークン（任意）</label>
-  <input type="password" id="token" placeholder="設定している場合のみ入力" />
-  <p class="hint">アプリ側で EXTENSION_TOKEN を設定した場合のみ必要です。</p>
+  <input type="password" id="token" placeholder="EXTENSION_TOKEN を設定した場合のみ入力" />
+  <p class="hint">未設定の場合は空白のままで問題ありません。</p>
 
-  <button id="save">保存</button>
+  <div>
+    <button class="btn-save" id="save">保存</button>
+    <button class="btn-reset" id="resetBtn">設定をリセット</button>
+  </div>
   <div id="status"></div>
+
+  <hr>
+  <p style="font-size:11px; color:#94a3b8; line-height:1.6;">
+    変更後は <code>chrome://extensions</code> でこの拡張を<strong>再読み込み</strong>してください。<br>
+    読み込み元: <code>/Users/kiyo/Desktop/property-recommend-ai/chrome-extension</code>
+  </p>
 
   <script src="options.js"></script>
 </body>

@@ -1,31 +1,32 @@
-// Vercel Preview URL を本番URLへ自動変換
-// 例: https://project-git-main-team.vercel.app → https://project-team.vercel.app
-function fixVercelPreviewUrl(url) {
-  return url
-    .replace(/-git-[a-z0-9]+(-[a-z0-9])/i, '$1')   // -git-main-team → -team
-    .replace(/-git-[a-z0-9]+\./i, '.')              // -git-main.vercel → .vercel（チームなし）
-}
-
+// Preview URL 検出
 function isPreviewUrl(url) {
-  return /-git-[a-z0-9]+[-\.]/i.test(url)
+  return /-git-[a-z0-9][-a-z0-9]*[-\.]/i.test(url)
 }
 
+// Preview URL → 本番URL変換
+// 例: https://property-recommend-ai-git-main-kiyo-s-projects1413.vercel.app
+//   → https://property-recommend-ai-kiyo-s-projects1413.vercel.app
+function fixVercelPreviewUrl(url) {
+  const fixed = url.replace(/-git-[a-z0-9][a-z0-9-]*?-([a-z0-9][a-z0-9-]*\.vercel\.app)/i, '-$1')
+  if (fixed !== url) return fixed
+  return url.replace(/-git-[a-z0-9][a-z0-9-]*\./i, '.')
+}
 
 document.addEventListener('DOMContentLoaded', async () => {
-  const pageStatusEl  = document.getElementById('pageStatus')
-  const mainContent   = document.getElementById('mainContent')
-  const noConfig      = document.getElementById('noConfig')
-  const addPageBtn    = document.getElementById('addPageBtn')
-  const openAppBtn    = document.getElementById('openAppBtn')
-  const clearBtn      = document.getElementById('clearBtn')
-  const resultEl      = document.getElementById('result')
-  const sessionPanel  = document.getElementById('sessionPanel')
-  const sessionLabel  = document.getElementById('sessionLabel')
-  const sessionCount  = document.getElementById('sessionCount')
-  const sessionHint   = document.getElementById('sessionHint')
-  const stepHint      = document.getElementById('stepHint')
-  const apiUrlBar     = document.getElementById('apiUrlBar')
-  const apiUrlText    = document.getElementById('apiUrlText')
+  const pageStatusEl   = document.getElementById('pageStatus')
+  const mainContent    = document.getElementById('mainContent')
+  const noConfig       = document.getElementById('noConfig')
+  const addPageBtn     = document.getElementById('addPageBtn')
+  const openAppBtn     = document.getElementById('openAppBtn')
+  const clearBtn       = document.getElementById('clearBtn')
+  const resultEl       = document.getElementById('result')
+  const sessionPanel   = document.getElementById('sessionPanel')
+  const sessionLabel   = document.getElementById('sessionLabel')
+  const sessionCount   = document.getElementById('sessionCount')
+  const sessionHint    = document.getElementById('sessionHint')
+  const stepHint       = document.getElementById('stepHint')
+  const apiUrlBar      = document.getElementById('apiUrlBar')
+  const apiUrlText     = document.getElementById('apiUrlText')
   const previewUrlWarn = document.getElementById('previewUrlWarn')
 
   document.getElementById('optionsLink').addEventListener('click', e => {
@@ -47,24 +48,46 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Preview URLを自動修正して保存し直す
   if (apiBase && isPreviewUrl(apiBase)) {
     const fixed = fixVercelPreviewUrl(apiBase)
-    console.warn(`[レインズ照合] Preview URL検出 → 本番URLへ自動修正: ${apiBase} → ${fixed}`)
-    apiBase = fixed
-    await chrome.storage.local.set({ apiBase: fixed })
-  }
-
-  // 接続先URLを表示
-  if (apiBase) {
-    apiUrlBar.style.display = 'block'
-    apiUrlText.textContent = apiBase
-    if (isPreviewUrl(apiBase)) {
-      previewUrlWarn.style.display = 'block'
+    console.warn(`[レインズ照合] Preview URL検出 → 自動修正: ${apiBase} → ${fixed}`)
+    // 修正後もまだPreviewか確認して、修正できていれば保存
+    if (!isPreviewUrl(fixed)) {
+      apiBase = fixed
+      await chrome.storage.local.set({ apiBase: fixed })
     }
   }
 
+  // ── 接続先URL表示 ─────────────────────────────────────────
+  if (apiBase) {
+    apiUrlBar.style.display = 'block'
+    apiUrlText.textContent = apiBase
+  }
+
+  // ── URLが未設定 ───────────────────────────────────────────
   if (!apiBase) {
     mainContent.style.display = 'none'
     noConfig.style.display = 'block'
     pageStatusEl.textContent = '設定が必要です'
+    pageStatusEl.className = 'warn'
+    return
+  }
+
+  // ── Preview URLが残っている場合 → 送信ブロック ────────────
+  if (isPreviewUrl(apiBase)) {
+    previewUrlWarn.style.display = 'block'
+    previewUrlWarn.innerHTML =
+      `⚠ <strong>Preview URL検出 — このままではCORSエラーになります</strong><br>` +
+      `現在: <code style="word-break:break-all">${apiBase}</code><br>` +
+      `<a href="#" id="openOptionsFromWarn" style="color:#dc2626;font-weight:700;">▶ 設定を開いてURLを修正する</a>`
+
+    document.getElementById('openOptionsFromWarn')?.addEventListener('click', e => {
+      e.preventDefault()
+      chrome.runtime.openOptionsPage()
+    })
+
+    // 送信ボタンを全部無効化
+    addPageBtn.disabled = true
+    openAppBtn.disabled = true
+    pageStatusEl.textContent = '⚠ 設定を修正してください'
     pageStatusEl.className = 'warn'
     return
   }
