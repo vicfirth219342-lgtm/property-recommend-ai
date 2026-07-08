@@ -10,7 +10,13 @@ document.addEventListener('DOMContentLoaded', () => {
   })
 
   saveBtn.addEventListener('click', () => {
-    const apiBase = apiBaseEl.value.trim().replace(/\/$/, '')
+    // オリジン（スキーム+ホスト）だけ保存。パスが入っていても自動除去
+    let apiBase = apiBaseEl.value.trim().replace(/\/$/, '')
+    try {
+      apiBase = new URL(apiBase).origin
+    } catch {
+      // URLパース失敗はそのまま保存
+    }
     const token = tokenEl.value.trim()
     if (!apiBase) {
       statusEl.textContent = 'URLを入力してください'
