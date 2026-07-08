@@ -1,33 +1,22 @@
-const STATUS_LABEL = {
-  confirmed: '掲載あり可能性高い',
-  review:    '要確認',
-  not_found: '掲載なし可能性高い',
-  pending:   '未確認',
-}
-
 document.addEventListener('DOMContentLoaded', async () => {
-  const pageStatusEl  = document.getElementById('pageStatus')
-  const mainContent   = document.getElementById('mainContent')
-  const noConfig      = document.getElementById('noConfig')
-  const checkSelect   = document.getElementById('checkSelect')
-  const sendBtn       = document.getElementById('sendBtn')
-  const resultEl      = document.getElementById('result')
+  const pageStatusEl = document.getElementById('pageStatus')
+  const mainContent  = document.getElementById('mainContent')
+  const noConfig     = document.getElementById('noConfig')
+  const sendBtn      = document.getElementById('sendBtn')
+  const resultEl     = document.getElementById('result')
 
-  // 設定画面リンク
-  document.getElementById('optionsLink').addEventListener('click', (e) => {
-    e.preventDefault()
-    chrome.runtime.openOptionsPage()
+  document.getElementById('optionsLink').addEventListener('click', e => {
+    e.preventDefault(); chrome.runtime.openOptionsPage()
   })
-  document.getElementById('openOptions')?.addEventListener('click', (e) => {
-    e.preventDefault()
-    chrome.runtime.openOptionsPage()
+  document.getElementById('openOptions')?.addEventListener('click', e => {
+    e.preventDefault(); chrome.runtime.openOptionsPage()
   })
 
-  // ストレージから設定読み込み（パスが混入していてもオリジンだけ使用）
+  // 設定読み込み（パスが混入していてもオリジンのみ使用）
   const stored = await chrome.storage.local.get(['apiBase', 'token'])
   const token = stored.token ?? ''
   let apiBase = stored.apiBase ?? ''
-  try { apiBase = new URL(apiBase).origin } catch { /* 不正URLはそのまま */ }
+  try { apiBase = new URL(apiBase).origin } catch { /* 不正URL */ }
 
   if (!apiBase) {
     mainContent.style.display = 'none'
@@ -40,99 +29,61 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 現在タブのURL確認
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
   const url = tab?.url ?? ''
+
   if (url.includes('reins.jp')) {
     pageStatusEl.textContent = '✓ レインズのページを検出しました'
     pageStatusEl.className = 'ok'
   } else {
-    pageStatusEl.textContent = '⚠ レインズ以外のページです（送信は可能）'
+    pageStatusEl.textContent = '⚠ レインズ以外のページです'
     pageStatusEl.className = 'warn'
   }
 
-  // 照合待ち物件リストを取得
-  try {
-    const listUrl = `${apiBase}/api/reins-check`
-    console.log('[レインズ照合] 物件リスト取得URL:', listUrl)
-    // デバッグ用: 呼び出しURLをUIに表示
-    pageStatusEl.textContent = `接続先: ${listUrl}`
-    const res = await fetch(listUrl, {
-      headers: token ? { 'x-extension-token': token } : {},
-    })
-    if (!res.ok) throw new Error(`HTTP ${res.status} (${listUrl})`)
-    const checks = await res.json()
-
-    checkSelect.innerHTML = ''
-    if (checks.length === 0) {
-      checkSelect.innerHTML = '<option value="">照合待ち物件がありません</option>'
-    } else {
-      checks.forEach(c => {
-        const opt = document.createElement('option')
-        opt.value = c.id
-        const statusLabel = STATUS_LABEL[c.match_status] ?? c.match_status
-        const price = c.price_man ? `${c.price_man.toLocaleString()}万円` : ''
-        const name = c.property_name ?? '（物件名なし）'
-        opt.textContent = `${name}　${price}　[${statusLabel}]`
-        checkSelect.appendChild(opt)
-      })
-      sendBtn.disabled = false
-    }
-  } catch (e) {
-    checkSelect.innerHTML = `<option value="">取得失敗: ${e.message}</option>`
-    pageStatusEl.textContent = `物件リスト取得エラー: ${e.message}`
-    pageStatusEl.className = 'warn'
-  }
-
-  // 送信ボタン
+  // 送信
   sendBtn.addEventListener('click', async () => {
-    const checkId = checkSelect.value
-    if (!checkId) return
-
     sendBtn.disabled = true
     sendBtn.textContent = '送信中...'
     resultEl.style.display = 'none'
 
     try {
-      // アクティブタブから document.body.innerText を取得
+      // アクティブタブから innerText と href を取得
       const [{ result: pageText }] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: () => document.body.innerText,
+      })
+      const [{ result: pageUrl }] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => window.location.href,
       })
 
       if (!pageText || pageText.trim().length < 20) {
         throw new Error('ページテキストが取得できませんでした')
       }
 
-      // API に送信
       const headers = { 'Content-Type': 'application/json' }
       if (token) headers['x-extension-token'] = token
 
-      const res = await fetch(`${apiBase}/api/reins/import-text`, {
+      const res = await fetch(`${apiBase}/api/reins/import-results`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({
-          source: 'chrome_extension',
-          text: pageText,
-          customer_search_url_id: checkId,
-        }),
+        body: JSON.stringify({ source: 'chrome_extension', text: pageText, page_url: pageUrl }),
       })
 
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
 
-      // 成功表示
-      const score = data.score ?? 0
-      const statusLabel = STATUS_LABEL[data.status] ?? data.status
-      const matched = (data.matched_items ?? []).join('・') || 'なし'
-
       resultEl.className = 'result success'
       resultEl.innerHTML = `
-        <div><strong>${data.property_name ?? '物件'}</strong></div>
-        <div class="score-row">
-          <span>照合スコア</span>
-          <span class="score-val">${score}<small style="font-size:12px;font-weight:400">/100点</small></span>
+        <div style="font-weight:600;margin-bottom:6px">✓ 送信完了</div>
+        <div class="stat-row">
+          <span>レインズ物件 抽出数</span>
+          <span class="stat-num">${data.extracted_count}<span class="sub">件</span></span>
         </div>
-        <div style="margin-top:4px;font-size:12px;font-weight:600">${statusLabel}</div>
-        <div class="score-items" style="margin-top:6px">
-          一致項目: <span>${matched}</span>
+        <div class="stat-row">
+          <span>候補物件 照合更新</span>
+          <span class="stat-num">${data.matched_portals}<span class="sub"> / ${data.total_portals}件</span></span>
+        </div>
+        <div style="margin-top:8px;font-size:11px;color:#15803d">
+          アプリの照合リストで結果を確認してください。
         </div>
       `
       resultEl.style.display = 'block'

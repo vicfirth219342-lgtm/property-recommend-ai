@@ -166,6 +166,125 @@ export function extractFromCsvRows(
   }).filter(r => Object.values(r).some(Boolean))
 }
 
+// ─────────────────────────────────────────────────────────────
+// レインズ取り込み物件（一括取得方式）
+// ─────────────────────────────────────────────────────────────
+
+export interface ReinsImportedProperty {
+  id?: string
+  reins_number?: string       // 物件番号（12桁）
+  property_name?: string      // 建物名
+  address?: string            // 所在地
+  price_man?: number
+  area_sqm?: number
+  floor_plan?: string
+  floor_number?: number
+  built_year?: number
+  built_month?: number
+  management_fee?: number
+  transaction_type?: string   // 売主/専任/一般
+  agent_company?: string      // 元付会社
+  station?: string
+  walk_minutes?: number
+  page_url?: string
+  imported_at?: string
+  raw_block?: string
+}
+
+// レインズ検索結果一覧テキストから複数物件を一括抽出
+export function extractMultipleFromReinsText(rawText: string): ReinsImportedProperty[] {
+  const text = normalizeText(rawText)
+
+  // 12桁のレインズ物件番号（1001XXXXXXXX）でブロックを分割
+  const positions: number[] = []
+  const numRe = /\b(\d{12})\b/g
+  let m: RegExpExecArray | null
+  while ((m = numRe.exec(text)) !== null) {
+    positions.push(m.index)
+  }
+  if (positions.length === 0) return []
+
+  const blocks: string[] = []
+  for (let i = 0; i < positions.length; i++) {
+    const start = positions[i]
+    const end = i + 1 < positions.length ? positions[i + 1] : text.length
+    blocks.push(text.slice(start, end))
+  }
+
+  return blocks
+    .map(block => extractSingleReinsProperty(block))
+    .filter(p => !!(p.price_man || p.area_sqm))
+}
+
+function extractSingleReinsProperty(block: string): ReinsImportedProperty {
+  const result: ReinsImportedProperty = { raw_block: block.slice(0, 500) }
+
+  // 物件番号（12桁）
+  const numMatch = block.match(/\b(\d{12})\b/)
+  if (numMatch) result.reins_number = numMatch[1]
+
+  // 価格（カンマ区切り対応、最初にヒットした万円）
+  const priceMatch = block.match(/(\d+(?:,\d+)*)万円/)
+  if (priceMatch) result.price_man = parseInt(priceMatch[1].replace(/,/g, ''))
+
+  // 専有面積（2〜3桁.小数）
+  const areaMatch = block.match(/(\d{2,3}(?:\.\d{1,2})?)\s*㎡/)
+  if (areaMatch) result.area_sqm = parseFloat(areaMatch[1])
+
+  // 間取り（正規化済み英字）
+  const planMatch = block.match(/([1-9][SLDK]{1,4}(?:\+[SLDK]{1,2})?)/i)
+  if (planMatch) result.floor_plan = planMatch[1].toUpperCase()
+
+  // 所在階（「XX階建」を除外）
+  const floorMatch = block.match(/(?<!\d)(\d{1,2})階(?!建)/)
+  if (floorMatch) {
+    const n = parseInt(floorMatch[1])
+    if (n >= 1 && n <= 80) result.floor_number = n
+  }
+
+  // 所在地（都道府県から始まる）
+  const addrMatch = block.match(/(東京都|神奈川県|大阪府|愛知県|千葉県|埼玉県|兵庫県)[^\n\r]{4,50}/)
+  if (addrMatch) result.address = addrMatch[0].trim()
+
+  // 建物名（所在地の後ろに続く行。マンション系キーワードを含む行を優先）
+  const buildingPatterns = [
+    /([^\n\r\d]{3,30}(?:マンション|タワー|レジデンス|コート|パーク|ヒルズ|ガーデン|プレイス|スクエア|テラス|ビル|ヴィラ|ハウス|アパート)[^\n\r]{0,20})/m,
+  ]
+  for (const p of buildingPatterns) {
+    const bm = block.match(p)
+    if (bm?.[1]?.trim()) { result.property_name = bm[1].trim(); break }
+  }
+
+  // 築年月
+  const { builtYear, builtMonth } = parseBuiltDate(
+    block.match(/(新築|築後未入居|(?:明治|大正|昭和|平成|令和)\d+年(?:\d+月)?|\d{4}年(?:\d+月)?|築\d+年)/)?.[0] ?? ''
+  )
+  if (builtYear) result.built_year = builtYear
+  if (builtMonth) result.built_month = builtMonth
+
+  // 管理費（最初の「円」）
+  const mgmtMatch = block.match(/(\d+(?:,\d+)*)\s*円/)
+  if (mgmtMatch) result.management_fee = parseInt(mgmtMatch[1].replace(/,/g, ''))
+
+  // 取引態様
+  const txMatch = block.match(/売主|専任|一般|代理|オーナーチェンジ/)
+  if (txMatch) result.transaction_type = txMatch[0]
+
+  // 元付会社（（株）（有）株式会社 有限会社）
+  const coMatch = block.match(/(?:（株）|（有）)[^\n\r（）]{2,25}/)
+    ?? block.match(/[^\n\r]{2,15}(?:株式会社|有限会社)[^\n\r]{0,15}/)
+  if (coMatch) result.agent_company = coMatch[0].trim()
+
+  // 駅・徒歩
+  const stMatch = block.match(/([^\s]{2,10}駅)\s*(?:徒歩|歩)\s*(\d+)分/)
+  if (stMatch) {
+    result.station = stMatch[1]
+    result.walk_minutes = parseInt(stMatch[2])
+  }
+
+  return result
+}
+
 // 検索キーワードを生成
 export function buildSearchKeywords(prop: ExtractedProperty): string[] {
   const keywords: string[] = []

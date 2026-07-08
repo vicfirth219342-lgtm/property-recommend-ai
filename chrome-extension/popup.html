@@ -5,7 +5,7 @@
   <title>レインズ照合ツール</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, 'Hiragino Sans', sans-serif; width: 340px; color: #1e293b; }
+    body { font-family: -apple-system, 'Hiragino Sans', sans-serif; width: 320px; color: #1e293b; }
 
     .header {
       background: #1e3a5f; color: white;
@@ -18,27 +18,19 @@
 
     .body { padding: 14px 16px; }
 
-    /* ステータスバー */
     #pageStatus {
       font-size: 11px; padding: 6px 10px; border-radius: 6px;
-      margin-bottom: 12px; background: #f1f5f9; color: #64748b;
+      margin-bottom: 14px; background: #f1f5f9; color: #64748b;
     }
-    #pageStatus.ok { background: #ecfdf5; color: #15803d; }
+    #pageStatus.ok   { background: #ecfdf5; color: #15803d; }
     #pageStatus.warn { background: #fffbeb; color: #b45309; }
 
-    label { font-size: 12px; color: #475569; display: block; margin-bottom: 4px; }
-
-    select {
-      width: 100%; border: 1px solid #cbd5e1; border-radius: 6px;
-      padding: 7px 10px; font-size: 12px; color: #1e293b;
-      background: white; margin-bottom: 12px; cursor: pointer;
-    }
-    select:focus { outline: none; border-color: #3b82f6; }
+    .desc { font-size: 12px; color: #475569; line-height: 1.6; margin-bottom: 14px; }
 
     #sendBtn {
-      width: 100%; padding: 10px;
+      width: 100%; padding: 12px;
       background: #1e40af; color: white; border: none;
-      border-radius: 8px; font-size: 13px; font-weight: 600;
+      border-radius: 8px; font-size: 14px; font-weight: 700;
       cursor: pointer; transition: background .15s;
     }
     #sendBtn:hover:not(:disabled) { background: #1d4ed8; }
@@ -51,14 +43,9 @@
     #result.success { background: #ecfdf5; border: 1px solid #86efac; color: #15803d; }
     #result.error   { background: #fef2f2; border: 1px solid #fca5a5; color: #dc2626; }
 
-    .score-row { display: flex; justify-content: space-between; margin-top: 8px; }
-    .score-val { font-size: 18px; font-weight: 700; }
-    .score-items { font-size: 11px; margin-top: 6px; color: #166534; }
-    .score-items span { margin-right: 6px; }
-
-    .loading { text-align: center; padding: 8px 0; color: #64748b; font-size: 12px; }
-    .dot-anim::after { content: ''; animation: dots 1.2s steps(3,end) infinite; }
-    @keyframes dots { 0%,100%{content:''} 33%{content:'.'} 66%{content:'..'} }
+    .stat-row { display: flex; justify-content: space-between; margin-top: 6px; }
+    .stat-num { font-size: 16px; font-weight: 700; }
+    .sub { font-size: 11px; color: inherit; opacity: .7; }
 
     .no-config {
       text-align: center; padding: 16px 12px;
@@ -77,13 +64,11 @@
     <div id="pageStatus">ページを確認中...</div>
 
     <div id="mainContent">
-      <label>照合対象の物件</label>
-      <select id="checkSelect">
-        <option value="">— 読み込み中 —</option>
-      </select>
-
-      <button id="sendBtn" disabled>この検索結果を送信</button>
-
+      <p class="desc">
+        レインズの検索結果ページを開いた状態でボタンを押すと、
+        全候補物件と自動照合します。
+      </p>
+      <button id="sendBtn">この検索結果を送信</button>
       <div id="result"></div>
     </div>
 
