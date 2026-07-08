@@ -8,17 +8,33 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: corsHeaders() })
 }
 
-// GET: 取り込み履歴サマリー
+// GET: 最終取り込みセッションのサマリー＋物件リスト
 export async function GET() {
   const supabase = createServiceClient()
+
+  // 最新1件の imported_at を取得してセッション特定
+  const { data: latest } = await supabase
+    .from('reins_imported_properties')
+    .select('imported_at')
+    .order('imported_at', { ascending: false })
+    .limit(1)
+    .single()
+
+  if (!latest) return NextResponse.json({ ok: true, count: 0, imported_at: null, properties: [] }, { headers: corsHeaders() })
+
+  // 同一セッション（±5秒以内）の物件を全取得
+  const sessionStart = new Date(new Date(latest.imported_at).getTime() - 5000).toISOString()
   const { data, error } = await supabase
     .from('reins_imported_properties')
-    .select('id, imported_at, page_url')
+    .select('id, reins_number, property_name, address, price_man, floor_plan, floor_number, agent_company, imported_at')
+    .gte('imported_at', sessionStart)
     .order('imported_at', { ascending: false })
-    .limit(10)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders() })
-  return NextResponse.json(data, { headers: corsHeaders() })
+  return NextResponse.json(
+    { ok: true, count: data?.length ?? 0, imported_at: latest.imported_at, properties: data ?? [] },
+    { headers: corsHeaders() }
+  )
 }
 
 // POST: Chrome拡張からレインズ検索結果を受信 → 抽出 → 一括照合

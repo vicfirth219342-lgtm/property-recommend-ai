@@ -94,6 +94,8 @@ export default function CandidatesPage() {
   const [sortKey, setSortKey] = useState<SortKey>('newest')
   const [filterKey, setFilterKey] = useState<FilterKey>('all')
   const [bulkProposing, setBulkProposing] = useState(false)
+  const [syncingReins, setSyncingReins] = useState(false)
+  const [syncResult, setSyncResult] = useState<{ registered: number; skipped: number } | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -127,6 +129,20 @@ export default function CandidatesPage() {
     })
     setProposed(prev => new Set(prev).add(propertyId))
     setProposing(prev => { const s = new Set(prev); s.delete(propertyId); return s })
+  }
+
+  async function syncToReinsCheck() {
+    if (!data) return
+    setSyncingReins(true); setSyncResult(null)
+    const res = await fetch('/api/reins-check/sync-portal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer_id: customerId }),
+    })
+    const json = await res.json()
+    if (res.ok) setSyncResult({ registered: json.registered, skipped: json.skipped })
+    else alert(json.error ?? '登録エラー')
+    setSyncingReins(false)
   }
 
   async function markAllProposed() {
@@ -208,13 +224,28 @@ export default function CandidatesPage() {
               </>
             )}
           </div>
-          <button
-            onClick={markAllProposed}
-            disabled={bulkProposing || visibleCandidates.length === 0}
-            className="text-sm border border-slate-300 px-4 py-1.5 rounded-lg hover:bg-slate-50 disabled:opacity-40 transition-colors"
-          >
-            {bulkProposing ? '処理中...' : `表示中${visibleCandidates.length}件を一括提案済み`}
-          </button>
+          <div className="flex gap-2 items-center">
+            {syncResult && (
+              <span className="text-xs text-green-600 bg-green-50 border border-green-200 px-2 py-1 rounded">
+                照合リストに{syncResult.registered}件追加（{syncResult.skipped}件スキップ）
+              </span>
+            )}
+            <button
+              onClick={syncToReinsCheck}
+              disabled={syncingReins || !data}
+              title="条件に合う全候補物件をレインズ照合リストに一括登録します"
+              className="text-sm border border-blue-300 text-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-50 disabled:opacity-40 transition-colors"
+            >
+              {syncingReins ? '登録中...' : 'レインズ照合リストに追加'}
+            </button>
+            <button
+              onClick={markAllProposed}
+              disabled={bulkProposing || visibleCandidates.length === 0}
+              className="text-sm border border-slate-300 px-4 py-1.5 rounded-lg hover:bg-slate-50 disabled:opacity-40 transition-colors"
+            >
+              {bulkProposing ? '処理中...' : `表示中${visibleCandidates.length}件を一括提案済み`}
+            </button>
+          </div>
         </div>
       </div>
 

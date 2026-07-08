@@ -1,9 +1,16 @@
 document.addEventListener('DOMContentLoaded', async () => {
-  const pageStatusEl = document.getElementById('pageStatus')
-  const mainContent  = document.getElementById('mainContent')
-  const noConfig     = document.getElementById('noConfig')
-  const sendBtn      = document.getElementById('sendBtn')
-  const resultEl     = document.getElementById('result')
+  const pageStatusEl  = document.getElementById('pageStatus')
+  const mainContent   = document.getElementById('mainContent')
+  const noConfig      = document.getElementById('noConfig')
+  const addPageBtn    = document.getElementById('addPageBtn')
+  const openAppBtn    = document.getElementById('openAppBtn')
+  const clearBtn      = document.getElementById('clearBtn')
+  const resultEl      = document.getElementById('result')
+  const sessionPanel  = document.getElementById('sessionPanel')
+  const sessionLabel  = document.getElementById('sessionLabel')
+  const sessionCount  = document.getElementById('sessionCount')
+  const sessionHint   = document.getElementById('sessionHint')
+  const stepHint      = document.getElementById('stepHint')
 
   document.getElementById('optionsLink').addEventListener('click', e => {
     e.preventDefault(); chrome.runtime.openOptionsPage()
@@ -12,11 +19,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     e.preventDefault(); chrome.runtime.openOptionsPage()
   })
 
-  // 設定読み込み（パスが混入していてもオリジンのみ使用）
-  const stored = await chrome.storage.local.get(['apiBase', 'token'])
+  // 設定読み込み
+  const stored = await chrome.storage.local.get(['apiBase', 'token', 'sessionId'])
   const token = stored.token ?? ''
   let apiBase = stored.apiBase ?? ''
   try { apiBase = new URL(apiBase).origin } catch { /* 不正URL */ }
+
+  let sessionId = stored.sessionId ?? null
 
   if (!apiBase) {
     mainContent.style.display = 'none'
@@ -38,14 +47,58 @@ document.addEventListener('DOMContentLoaded', async () => {
     pageStatusEl.className = 'warn'
   }
 
-  // 送信
-  sendBtn.addEventListener('click', async () => {
-    sendBtn.disabled = true
-    sendBtn.textContent = '送信中...'
-    resultEl.style.display = 'none'
+  // セッション状態を更新する関数
+  function updateSessionUI(count, id) {
+    if (!count || count === 0) {
+      sessionPanel.className = 'empty'
+      sessionLabel.textContent = 'セッションなし'
+      sessionLabel.className = 'session-label empty'
+      sessionCount.textContent = '—'
+      sessionCount.className = 'session-count empty'
+      sessionHint.textContent = '「このページを追加」でセッションを開始'
+      openAppBtn.disabled = true
+      clearBtn.disabled = true
+      stepHint.textContent = '複数ページを追加してからアプリで照合してください'
+    } else {
+      sessionPanel.className = ''
+      sessionLabel.textContent = '取り込み中'
+      sessionLabel.className = 'session-label'
+      sessionCount.textContent = `${count}ページ`
+      sessionCount.className = 'session-count'
+      sessionHint.textContent = `セッション ID: ${(id ?? '').slice(0, 8)}...`
+      openAppBtn.disabled = false
+      clearBtn.disabled = false
+      stepHint.textContent = '続けて次のページも追加できます'
+    }
+  }
+
+  // 保存済みセッションの状態を確認
+  if (sessionId) {
+    try {
+      const res = await fetch(`${apiBase}/api/reins/sessions/current`, {
+        headers: token ? { 'x-extension-token': token } : {},
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.session?.id === sessionId) {
+          updateSessionUI(data.session.page_count, sessionId)
+        } else {
+          // 別セッションが開いている、またはセッション終了済み
+          sessionId = data.session?.id ?? null
+          await chrome.storage.local.set({ sessionId })
+          updateSessionUI(data.session?.page_count ?? 0, sessionId)
+        }
+      }
+    } catch { /* ネットワークエラー → UIはデフォルトのまま */ }
+  }
+
+  // ─── このページを追加 ───────────────────────────────────────
+  addPageBtn.addEventListener('click', async () => {
+    addPageBtn.disabled = true
+    addPageBtn.textContent = '送信中...'
+    showResult('')
 
     try {
-      // アクティブタブから innerText と href を取得
       const [{ result: pageText }] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: () => document.body.innerText,
@@ -62,38 +115,78 @@ document.addEventListener('DOMContentLoaded', async () => {
       const headers = { 'Content-Type': 'application/json' }
       if (token) headers['x-extension-token'] = token
 
-      const res = await fetch(`${apiBase}/api/reins/import-results`, {
+      const res = await fetch(`${apiBase}/api/reins/import-page`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ source: 'chrome_extension', text: pageText, page_url: pageUrl }),
+        body: JSON.stringify({
+          session_id: sessionId,
+          text: pageText,
+          page_url: pageUrl,
+        }),
       })
 
-      const data = await res.json()
+      let data
+      try {
+        data = await res.json()
+      } catch {
+        throw new Error(
+          `API応答がHTMLです（HTTP ${res.status}）。\n` +
+          `Vercelへの最新コードのデプロイを確認してください。\n` +
+          `送信先: ${apiBase}/api/reins/import-page`
+        )
+      }
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
 
-      resultEl.className = 'result success'
-      resultEl.innerHTML = `
-        <div style="font-weight:600;margin-bottom:6px">✓ 送信完了</div>
-        <div class="stat-row">
-          <span>レインズ物件 抽出数</span>
-          <span class="stat-num">${data.extracted_count}<span class="sub">件</span></span>
-        </div>
-        <div class="stat-row">
-          <span>候補物件 照合更新</span>
-          <span class="stat-num">${data.matched_portals}<span class="sub"> / ${data.total_portals}件</span></span>
-        </div>
-        <div style="margin-top:8px;font-size:11px;color:#15803d">
-          アプリの照合リストで結果を確認してください。
-        </div>
-      `
-      resultEl.style.display = 'block'
-      sendBtn.textContent = '✓ 送信済み'
+      sessionId = data.session_id
+      await chrome.storage.local.set({ sessionId })
+
+      updateSessionUI(data.page_count, sessionId)
+
+      showResult(
+        `✓ ${data.page_count}ページ目を追加しました\n` +
+        (data.page_count >= 2
+          ? '次のページに移動して同様に追加できます。\n全ページ追加後、アプリで照合してください。'
+          : '次のページも追加できます。'),
+        'success'
+      )
     } catch (e) {
-      resultEl.className = 'result error'
-      resultEl.textContent = `エラー: ${e.message}`
-      resultEl.style.display = 'block'
-      sendBtn.disabled = false
-      sendBtn.textContent = 'この検索結果を送信'
+      showResult(`エラー: ${e.message}`, 'error')
+    } finally {
+      addPageBtn.disabled = false
+      addPageBtn.textContent = 'このページを追加'
     }
   })
+
+  // ─── アプリで照合する ────────────────────────────────────────
+  openAppBtn.addEventListener('click', () => {
+    const appUrl = `${apiBase}/reins-check`
+    chrome.tabs.create({ url: appUrl })
+  })
+
+  // ─── セッションをクリア ──────────────────────────────────────
+  clearBtn.addEventListener('click', async () => {
+    if (!sessionId) return
+    if (!confirm(`${sessionCount.textContent}分のデータを削除しますか？`)) return
+
+    clearBtn.disabled = true
+    try {
+      const headers = token ? { 'x-extension-token': token } : {}
+      await fetch(`${apiBase}/api/reins/sessions/${sessionId}`, {
+        method: 'DELETE', headers,
+      })
+    } catch { /* ignore */ }
+
+    sessionId = null
+    await chrome.storage.local.set({ sessionId: null })
+    updateSessionUI(0, null)
+    showResult('セッションをクリアしました', 'info')
+  })
+
+  function showResult(text, type = 'info') {
+    if (!text) { resultEl.style.display = 'none'; return }
+    resultEl.className = `result ${type}`
+    resultEl.style.whiteSpace = 'pre-line'
+    resultEl.textContent = text
+    resultEl.style.display = 'block'
+  }
 })

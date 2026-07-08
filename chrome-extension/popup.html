@@ -20,38 +20,73 @@
 
     #pageStatus {
       font-size: 11px; padding: 6px 10px; border-radius: 6px;
-      margin-bottom: 14px; background: #f1f5f9; color: #64748b;
+      margin-bottom: 12px; background: #f1f5f9; color: #64748b;
     }
     #pageStatus.ok   { background: #ecfdf5; color: #15803d; }
     #pageStatus.warn { background: #fffbeb; color: #b45309; }
 
-    .desc { font-size: 12px; color: #475569; line-height: 1.6; margin-bottom: 14px; }
+    .desc { font-size: 12px; color: #475569; line-height: 1.6; margin-bottom: 12px; }
 
-    #sendBtn {
-      width: 100%; padding: 12px;
-      background: #1e40af; color: white; border: none;
-      border-radius: 8px; font-size: 14px; font-weight: 700;
-      cursor: pointer; transition: background .15s;
+    /* セッション状態パネル */
+    #sessionPanel {
+      background: #f0f9ff; border: 1px solid #bae6fd;
+      border-radius: 8px; padding: 10px 12px; margin-bottom: 12px;
     }
-    #sendBtn:hover:not(:disabled) { background: #1d4ed8; }
-    #sendBtn:disabled { opacity: 0.45; cursor: not-allowed; }
+    #sessionPanel.empty { background: #f8fafc; border-color: #e2e8f0; }
+    .session-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+    .session-label { font-size: 11px; color: #0369a1; font-weight: 500; }
+    .session-label.empty { color: #94a3b8; }
+    .session-count { font-size: 18px; font-weight: 700; color: #0c4a6e; }
+    .session-count.empty { font-size: 13px; color: #94a3b8; }
+    .session-hint { font-size: 10px; color: #7dd3fc; margin-top: 2px; }
+
+    .btn-primary {
+      width: 100%; padding: 11px;
+      background: #1e40af; color: white; border: none;
+      border-radius: 8px; font-size: 13px; font-weight: 700;
+      cursor: pointer; transition: background .15s; margin-bottom: 6px;
+    }
+    .btn-primary:hover:not(:disabled) { background: #1d4ed8; }
+    .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .btn-secondary {
+      width: 100%; padding: 8px;
+      background: white; color: #475569;
+      border: 1px solid #cbd5e1; border-radius: 8px;
+      font-size: 12px; font-weight: 500;
+      cursor: pointer; transition: all .15s; margin-bottom: 6px;
+    }
+    .btn-secondary:hover:not(:disabled) { background: #f8fafc; border-color: #94a3b8; }
+    .btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .btn-danger {
+      width: 100%; padding: 7px;
+      background: white; color: #ef4444;
+      border: 1px solid #fca5a5; border-radius: 8px;
+      font-size: 11px; cursor: pointer; transition: all .15s;
+    }
+    .btn-danger:hover:not(:disabled) { background: #fef2f2; }
 
     #result {
-      margin-top: 12px; padding: 10px 12px;
+      margin-top: 10px; padding: 10px 12px;
       border-radius: 8px; font-size: 12px; display: none;
     }
     #result.success { background: #ecfdf5; border: 1px solid #86efac; color: #15803d; }
     #result.error   { background: #fef2f2; border: 1px solid #fca5a5; color: #dc2626; }
+    #result.info    { background: #eff6ff; border: 1px solid #93c5fd; color: #1d4ed8; }
 
-    .stat-row { display: flex; justify-content: space-between; margin-top: 6px; }
-    .stat-num { font-size: 16px; font-weight: 700; }
-    .sub { font-size: 11px; color: inherit; opacity: .7; }
+    .stat-row { display: flex; justify-content: space-between; margin-top: 5px; font-size: 12px; }
+    .stat-num { font-size: 15px; font-weight: 700; }
+    .sub { font-size: 10px; opacity: .7; }
 
     .no-config {
       text-align: center; padding: 16px 12px;
       font-size: 12px; color: #94a3b8; line-height: 1.6;
     }
     .no-config a { color: #3b82f6; text-decoration: none; }
+
+    hr { border: none; border-top: 1px solid #e2e8f0; margin: 10px 0; }
+    .step-hint { font-size: 10px; color: #94a3b8; text-align: center; margin-top: 4px; }
   </style>
 </head>
 <body>
@@ -64,12 +99,30 @@
     <div id="pageStatus">ページを確認中...</div>
 
     <div id="mainContent">
-      <p class="desc">
-        レインズの検索結果ページを開いた状態でボタンを押すと、
-        全候補物件と自動照合します。
-      </p>
-      <button id="sendBtn">この検索結果を送信</button>
+
+      <!-- セッション状態 -->
+      <div id="sessionPanel" class="empty">
+        <div class="session-row">
+          <span class="session-label empty" id="sessionLabel">セッションなし</span>
+          <span class="session-count empty" id="sessionCount">—</span>
+        </div>
+        <div class="session-hint" id="sessionHint">「このページを追加」でセッションを開始</div>
+      </div>
+
+      <!-- ステップ1: ページ追加 -->
+      <button id="addPageBtn" class="btn-primary">このページを追加</button>
+
+      <!-- ステップ2: 照合（1ページ以上追加後に有効化） -->
+      <button id="openAppBtn" class="btn-secondary" disabled>
+        アプリで照合する（→ 照合リストを開く）
+      </button>
+
+      <!-- セッションクリア -->
+      <button id="clearBtn" class="btn-danger" disabled>セッションをクリア</button>
+
       <div id="result"></div>
+
+      <div class="step-hint" id="stepHint">複数ページを追加してからアプリで照合してください</div>
     </div>
 
     <div id="noConfig" class="no-config" style="display:none">
