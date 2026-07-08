@@ -56,17 +56,24 @@ interface MatchResult {
   session_id: string
   pages_processed: number
   extracted_count: number
+  with_name_count: number
   after_dedup: number
   over_limit: boolean
   matched_portals: number
   total_portals: number
+  updated_count: number
+  failed_count: number
+  errors: string[]
   reins_properties: {
     reins_number?: string
     property_name?: string
     address?: string
     price_man?: number
+    area_sqm?: number
     floor_plan?: string
+    floor_number?: number
     agent_company?: string
+    station?: string
   }[]
 }
 
@@ -398,24 +405,50 @@ export default function ReinsCheckPage() {
                 ⚠ 取り込み件数が多いため、検索条件を絞ることを推奨します（300件上限で切り捨て）
               </div>
             )}
-            <div className="grid grid-cols-2 gap-2 text-xs text-green-300">
-              <div>ページ処理数：{matchResult.pages_processed}</div>
-              <div>抽出物件数：{matchResult.extracted_count}</div>
-              <div>重複除外後：{matchResult.after_dedup}</div>
-              <div>照合更新：{matchResult.matched_portals}/{matchResult.total_portals}件</div>
+            {/* デバッグ統計 */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs text-green-300 mb-2">
+              <div className="bg-green-950/40 rounded px-2 py-1">ページ処理：<span className="font-bold text-green-100">{matchResult.pages_processed}</span></div>
+              <div className="bg-green-950/40 rounded px-2 py-1">抽出物件：<span className="font-bold text-green-100">{matchResult.extracted_count}</span></div>
+              <div className="bg-green-950/40 rounded px-2 py-1">物件名取得：<span className="font-bold text-green-100">{matchResult.with_name_count}</span></div>
+              <div className="bg-green-950/40 rounded px-2 py-1">重複除外後：<span className="font-bold text-green-100">{matchResult.after_dedup}</span></div>
+              <div className="bg-green-950/40 rounded px-2 py-1">照合対象：<span className="font-bold text-green-100">{matchResult.total_portals}</span></div>
+              <div className="bg-green-950/40 rounded px-2 py-1">
+                DB保存：<span className="font-bold text-green-100">{matchResult.updated_count}</span>
+                {matchResult.failed_count > 0 && <span className="text-red-300 ml-1">失敗{matchResult.failed_count}</span>}
+              </div>
             </div>
+            {/* DB保存エラー表示 */}
+            {matchResult.errors && matchResult.errors.length > 0 && (
+              <div className="mb-2 bg-red-900/60 border border-red-600 rounded px-2 py-2 text-xs text-red-200">
+                <div className="font-semibold mb-1">⚠ DB保存エラー（{matchResult.errors.length}件）</div>
+                {matchResult.errors.slice(0, 5).map((e, i) => (
+                  <div key={i} className="font-mono text-red-300 text-xs truncate">{e}</div>
+                ))}
+                {matchResult.errors.length > 5 && (
+                  <div className="text-red-400 text-xs mt-1">…他{matchResult.errors.length - 5}件（ブラウザのコンソールを確認）</div>
+                )}
+              </div>
+            )}
             <button onClick={() => setShowReinsProps(v => !v)}
-              className="text-xs text-green-400 underline mt-2 hover:text-green-200">
+              className="text-xs text-green-400 underline mt-1 hover:text-green-200">
               {showReinsProps ? '▲ 閉じる' : `▼ 取り込んだレインズ物件（${matchResult.after_dedup}件）`}
             </button>
             {showReinsProps && (
-              <div className="mt-2 space-y-1 max-h-48 overflow-y-auto">
+              <div className="mt-2 space-y-1 max-h-56 overflow-y-auto">
                 {matchResult.reins_properties.map((p, i) => (
-                  <div key={i} className="text-xs text-green-300 bg-green-950/50 rounded px-2 py-1 flex gap-2">
-                    {p.reins_number && <span className="font-mono text-green-400 shrink-0">{p.reins_number}</span>}
-                    <span className="truncate">{p.property_name ?? '（物件名なし）'}</span>
-                    {p.price_man && <span className="shrink-0 text-green-400">{p.price_man.toLocaleString()}万</span>}
-                    {p.agent_company && <span className="shrink-0 text-green-500 text-right">{p.agent_company}</span>}
+                  <div key={i} className="text-xs text-green-300 bg-green-950/50 rounded px-2 py-1.5">
+                    <div className="flex gap-2 items-baseline">
+                      {p.reins_number && <span className="font-mono text-green-400 shrink-0 text-xs">{p.reins_number}</span>}
+                      <span className="truncate font-medium">{p.property_name ?? '（物件名なし）'}</span>
+                      {p.price_man && <span className="shrink-0 text-green-400">{p.price_man.toLocaleString()}万</span>}
+                    </div>
+                    <div className="flex gap-2 mt-0.5 text-green-500">
+                      {p.address && <span className="truncate">{p.address}</span>}
+                      {p.area_sqm && <span className="shrink-0">{p.area_sqm}㎡</span>}
+                      {p.floor_plan && <span className="shrink-0">{p.floor_plan}</span>}
+                      {p.floor_number && <span className="shrink-0">{p.floor_number}階</span>}
+                    </div>
+                    {p.agent_company && <div className="text-green-600 mt-0.5">{p.agent_company}</div>}
                   </div>
                 ))}
               </div>

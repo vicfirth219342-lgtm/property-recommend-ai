@@ -43,6 +43,9 @@ export async function POST(
     }
   }
 
+  const withNameCount = allProps.filter(p => p.property_name).length
+  console.log(`[match] 抽出物件数: ${allProps.length} / 物件名取得: ${withNameCount} / ページ数: ${pages.length}`)
+
   if (allProps.length === 0) {
     return NextResponse.json(
       { error: 'レインズ物件を抽出できませんでした。テキストを確認してください。', extracted_count: 0 },
@@ -75,17 +78,27 @@ export async function POST(
     .select()
 
   if (insertErr) {
+    console.error('[match] reins_imported_properties insert error:', insertErr)
     return NextResponse.json({ error: insertErr.message }, { status: 500 })
   }
 
   // ⑥ 未確認の照合候補を全件取得
-  const { data: pendingChecks } = await supabase
+  const { data: pendingChecks, error: pendingErr } = await supabase
     .from('pending_reins_checks')
     .select('*')
     .in('match_status', ['pending', 'not_found', 'review'])
 
-  // ⑦ 一括照合
+  if (pendingErr) {
+    console.error('[match] pending_reins_checks fetch error:', pendingErr)
+  }
+
+  console.log(`[match] 照合対象ポータル候補: ${pendingChecks?.length ?? 0}件 / レインズ物件: ${deduped.length}件`)
+
+  // ⑦ 一括照合 + DB保存
   let updatedCount = 0
+  let failedCount = 0
+  const errors: string[] = []
+
   for (const portal of (pendingChecks ?? [])) {
     const { bestReins, result } = findBestReinsMatch(
       {
@@ -104,26 +117,38 @@ export async function POST(
 
     const currentScore = portal.match_score ?? -1
     if (result.score > currentScore) {
+      // NOTE: id を update payload に含めるとSupabaseがPK更新エラーを返す → 除外
       const { error: updErr } = await supabase
         .from('pending_reins_checks')
         .update({
-          id:              portal.id,
-          match_score:     result.score,
-          match_status:    result.status,
-          matched_items:   result.matched_items,
-          unmatched_items: result.unmatched_items,
-          score_detail:    result.score_detail,
-          reins_number:    bestReins?.reins_number ?? null,
-          agent_company:   bestReins?.agent_company ?? null,
+          match_score:      result.score,
+          match_status:     result.status,
+          matched_items:    result.matched_items,
+          unmatched_items:  result.unmatched_items,
+          score_detail:     result.score_detail,
+          reins_number:     bestReins?.reins_number ?? null,
+          agent_company:    bestReins?.agent_company ?? null,
           matched_reins_id: bestReins
             ? (inserted?.find(r => r.reins_number === bestReins.reins_number)?.id ?? null)
             : null,
-          checked_at: new Date().toISOString(),
+          checked_at:       new Date().toISOString(),
         })
         .eq('id', portal.id)
 
-      if (!updErr) updatedCount++
+      if (!updErr) {
+        updatedCount++
+      } else {
+        failedCount++
+        const errMsg = `portal ${portal.id} (${portal.property_name ?? '名称不明'}): ${updErr.message}`
+        errors.push(errMsg)
+        console.error('[match] DB update error:', errMsg, updErr)
+      }
     }
+  }
+
+  console.log(`[match] DB保存完了: 成功 ${updatedCount}件 / 失敗 ${failedCount}件`)
+  if (errors.length > 0) {
+    console.error('[match] 保存エラー一覧:', errors)
   }
 
   // ⑧ セッションを completed に更新
@@ -141,17 +166,24 @@ export async function POST(
     session_id: sessionId,
     pages_processed: pages.length,
     extracted_count: allProps.length,
+    with_name_count: withNameCount,
     after_dedup: deduped.length,
     over_limit: overLimit,
-    matched_portals: updatedCount,
     total_portals: pendingChecks?.length ?? 0,
+    matched_portals: updatedCount,
+    updated_count:   updatedCount,
+    failed_count:    failedCount,
+    errors,
     reins_properties: deduped.map(p => ({
       reins_number:  p.reins_number,
       property_name: p.property_name,
       address:       p.address,
       price_man:     p.price_man,
       floor_plan:    p.floor_plan,
+      floor_number:  p.floor_number,
+      area_sqm:      p.area_sqm,
       agent_company: p.agent_company,
+      station:       p.station,
     })),
   })
 }

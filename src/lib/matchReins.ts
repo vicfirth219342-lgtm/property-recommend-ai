@@ -275,8 +275,38 @@ function scoreProperties(portal: PropertyForScoring, reins: PropertyForScoring):
       reason: `データなし（SUUMO:${pYear ? pYear + '年' : '未取得'} / レインズ:${rYear ? rYear + '年' : '未取得'}）` })
   }
 
-  const status: MatchResult['status'] =
-    score >= 85 ? 'confirmed' : score >= 60 ? 'review' : 'not_found'
+  // ── データ不足チェック ──────────────────────────────────
+  // 物件名・所在地・専有面積のいずれも取れていない場合は confirmed を禁止（要確認止まり）
+  const nameMatched    = detail.find(d => d.item === '物件名')?.matched ?? false
+  const addrMatched    = detail.find(d => d.item === '所在地')?.matched ?? false
+  const areaAvailable  = (portal.area_sqm != null && reins.area_sqm != null)
+  const nameAvailable  = !!(pName && rName)
+  const addrAvailable  = !!(pAddr && rAddr && !isVagueAddress(pAddr))
+
+  // 識別項目（物件名 OR 所在地 OR 専有面積）のどれも取れていない → 要確認上限
+  const hasIdentifier = nameAvailable || addrAvailable || areaAvailable
+  // 価格のみ一致で他が全て不一致 → confirmed にしない
+  const onlyPriceMatched = matched.length > 0 && matched.every(m => m.startsWith('価格'))
+  // 物件名と所在地が両方不一致 → confirmed にしない
+  const noNameAndAddr = !nameMatched && !addrMatched
+
+  let status: MatchResult['status']
+  if (score >= 85 && hasIdentifier && !onlyPriceMatched && !noNameAndAddr) {
+    status = 'confirmed'
+  } else if (score >= 60 || (score >= 85 && (!hasIdentifier || onlyPriceMatched || noNameAndAddr))) {
+    status = 'review'
+  } else {
+    status = 'not_found'
+  }
+
+  // データ不足の場合はスコア内訳に注記を追加
+  if (!hasIdentifier) {
+    detail.push({
+      item: 'データ不足',
+      earned: 0, max: 0, matched: false,
+      reason: '物件名・所在地・専有面積のいずれも取得できていないため、高スコアでも要確認止まりです',
+    })
+  }
 
   return { score, status, matched_items: matched, unmatched_items: unmatched, score_detail: detail }
 }

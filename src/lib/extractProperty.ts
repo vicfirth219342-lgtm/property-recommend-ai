@@ -216,8 +216,81 @@ export function extractMultipleFromReinsText(rawText: string): ReinsImportedProp
     .filter(p => !!(p.price_man || p.area_sqm))
 }
 
+// レインズ一覧の「所在地」欄に含まれる都道府県パターン
+const PREF_PATTERN = /^(東京都|神奈川県|大阪府|愛知県|千葉県|埼玉県|兵庫県|福岡県|北海道|宮城県|京都府|広島県|静岡県|茨城県|栃木県|群馬県|新潟県|長野県|岐阜県|三重県|滋賀県|奈良県|和歌山県|岡山県|山口県|熊本県|鹿児島県|沖縄県)/
+
+// レインズ一覧の「所在地」欄は以下のように複数行で構成される:
+//   1行目: 住所（都道府県から始まる）
+//   2行目: 建物名
+//   3行目: 沿線・駅
+//   4行目: 商号（会社名）
+//   5行目: 電話番号 など
+function parseAddressBlock(lines: string[]): {
+  address?: string
+  property_name?: string
+  station?: string
+  walk_minutes?: number
+  agent_company?: string
+} {
+  const result: { address?: string; property_name?: string; station?: string; walk_minutes?: number; agent_company?: string } = {}
+  let addrIdx = -1
+
+  for (let i = 0; i < lines.length; i++) {
+    if (PREF_PATTERN.test(lines[i])) {
+      addrIdx = i
+      // 住所行は都道府県 + 住所部分のみ（次の行以降は別情報）
+      result.address = lines[i].trim()
+      break
+    }
+  }
+
+  if (addrIdx < 0) return result
+
+  // 住所の次の行 → 建物名（空行・電話番号・数字のみ行を除く）
+  for (let i = addrIdx + 1; i < lines.length && i <= addrIdx + 3; i++) {
+    const line = lines[i].trim()
+    if (!line) continue
+    // 電話番号行（ハイフン付き数字）・12桁番号行はスキップ
+    if (/^\d[\d\-－]+\d$/.test(line)) continue
+    // 数字のみ・記号のみはスキップ
+    if (/^[\d\s,，.．\-]+$/.test(line)) continue
+    result.property_name = line
+    break
+  }
+
+  // 住所の後ろ3〜6行から沿線・会社を探す
+  for (let i = addrIdx + 2; i < lines.length && i <= addrIdx + 6; i++) {
+    const line = lines[i].trim()
+    if (!line) continue
+
+    // 駅情報（「東横線 新丸子」「東横線 新丸子 徒歩3分」など）
+    if (!result.station) {
+      const stMatch = line.match(/([^\s]{2,10}駅)/)
+      if (stMatch) {
+        result.station = stMatch[1]
+        const walkMatch = line.match(/(?:徒歩|歩)\s*(\d+)分/)
+        if (walkMatch) result.walk_minutes = parseInt(walkMatch[1])
+        continue
+      }
+      // 「XX線 YY」形式（駅名なし）の場合も沿線情報として取得
+      if (/線\s+[^\s]{2,}/.test(line) && !result.station) {
+        result.station = line
+        continue
+      }
+    }
+
+    // 会社名（（株）/（有）/株式会社/有限会社）
+    if (!result.agent_company && /(株式会社|（株）|\(株\)|有限会社|（有）|\(有\))/.test(line)) {
+      result.agent_company = line
+    }
+  }
+
+  return result
+}
+
 function extractSingleReinsProperty(block: string): ReinsImportedProperty {
-  const result: ReinsImportedProperty = { raw_block: block.slice(0, 500) }
+  const result: ReinsImportedProperty = { raw_block: block.slice(0, 600) }
+  const lines = block.split(/\n/)
 
   // 物件番号（12桁）
   const numMatch = block.match(/\b(\d{12})\b/)
@@ -242,17 +315,34 @@ function extractSingleReinsProperty(block: string): ReinsImportedProperty {
     if (n >= 1 && n <= 80) result.floor_number = n
   }
 
-  // 所在地（都道府県から始まる）
-  const addrMatch = block.match(/(東京都|神奈川県|大阪府|愛知県|千葉県|埼玉県|兵庫県)[^\n\r]{4,50}/)
-  if (addrMatch) result.address = addrMatch[0].trim()
+  // 所在地・建物名・沿線・会社名を「住所行の次行」構造で解析
+  const addrBlock = parseAddressBlock(lines)
+  if (addrBlock.address) result.address = addrBlock.address
+  if (addrBlock.property_name) result.property_name = addrBlock.property_name
+  if (addrBlock.station) result.station = addrBlock.station
+  if (addrBlock.walk_minutes) result.walk_minutes = addrBlock.walk_minutes
+  if (addrBlock.agent_company) result.agent_company = addrBlock.agent_company
 
-  // 建物名（所在地の後ろに続く行。マンション系キーワードを含む行を優先）
-  const buildingPatterns = [
-    /([^\n\r\d]{3,30}(?:マンション|タワー|レジデンス|コート|パーク|ヒルズ|ガーデン|プレイス|スクエア|テラス|ビル|ヴィラ|ハウス|アパート)[^\n\r]{0,20})/m,
-  ]
-  for (const p of buildingPatterns) {
-    const bm = block.match(p)
-    if (bm?.[1]?.trim()) { result.property_name = bm[1].trim(); break }
+  // 建物名が取れなかった場合のフォールバック: マンション系キーワード検索
+  if (!result.property_name) {
+    const bm = block.match(/([^\n\r\d]{3,40}(?:マンション|タワー|レジデンス|コート|パーク|ヒルズ|ガーデン|プレイス|スクエア|テラス|ビル|ヴィラ|ハウス|アパート|クレッセント|ライオンズ|グランド|ウィング|アーバン|フォレスト|シティ|ハイツ|コーポ)[^\n\r]{0,20})/m)
+    if (bm?.[1]?.trim()) result.property_name = bm[1].trim()
+  }
+
+  // 駅・徒歩（まだ取れていない場合のフォールバック）
+  if (!result.station) {
+    const stMatch = block.match(/([^\s]{2,10}駅)\s*(?:徒歩|歩)\s*(\d+)分/)
+    if (stMatch) {
+      result.station = stMatch[1]
+      result.walk_minutes = parseInt(stMatch[2])
+    }
+  }
+
+  // 会社名のフォールバック（まだ取れていない場合）
+  if (!result.agent_company) {
+    const coMatch = block.match(/(?:（株）|\(株\))[^\n\r（）]{2,25}/)
+      ?? block.match(/[^\n\r]{2,15}(?:株式会社|有限会社)[^\n\r]{0,15}/)
+    if (coMatch) result.agent_company = coMatch[0].trim()
   }
 
   // 築年月
@@ -269,18 +359,6 @@ function extractSingleReinsProperty(block: string): ReinsImportedProperty {
   // 取引態様
   const txMatch = block.match(/売主|専任|一般|代理|オーナーチェンジ/)
   if (txMatch) result.transaction_type = txMatch[0]
-
-  // 元付会社（（株）（有）株式会社 有限会社）
-  const coMatch = block.match(/(?:（株）|（有）)[^\n\r（）]{2,25}/)
-    ?? block.match(/[^\n\r]{2,15}(?:株式会社|有限会社)[^\n\r]{0,15}/)
-  if (coMatch) result.agent_company = coMatch[0].trim()
-
-  // 駅・徒歩
-  const stMatch = block.match(/([^\s]{2,10}駅)\s*(?:徒歩|歩)\s*(\d+)分/)
-  if (stMatch) {
-    result.station = stMatch[1]
-    result.walk_minutes = parseInt(stMatch[2])
-  }
 
   return result
 }
