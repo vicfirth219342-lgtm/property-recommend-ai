@@ -128,6 +128,9 @@ function PropertyCard({
     setProposing(false)
   }
 
+  const isRentProp = prop.transaction_type === 'rent'
+  // 賃貸: monthly_rent（円）を万円表示、売買: price（円）を万円表示
+  const displayPrice = isRentProp ? prop.monthly_rent : prop.price
   const fmt = (p: number | null) => p ? `${(p / 10000).toLocaleString()}万円` : '価格未定'
 
   return (
@@ -149,7 +152,7 @@ function PropertyCard({
           {prop.address && <p className="text-xs text-slate-500 mt-0.5 truncate">{prop.address}</p>}
         </div>
         <div className="text-right flex-shrink-0">
-          <div className="font-bold text-slate-800">{fmt(prop.price)}</div>
+          <div className="font-bold text-slate-800">{fmt(displayPrice)}</div>
           {prop.floor_plan && <div className="text-xs text-slate-500">{prop.floor_plan}</div>}
         </div>
       </div>
