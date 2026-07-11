@@ -373,12 +373,17 @@ export function resolveAreaNames(
 
 /**
  * portal_url_param が SUUMO駅パス形式かどうか判定
- * 例: "kanagawa/eki_musashikosugi" → true
- *     "ta=14&sc=14133"             → false
+ * 有効: "kanagawa/ek_38720"（ek_数値コード形式）→ true
+ * 無効: "kanagawa/eki_kannai"（eki_名前形式・廃止・404）→ false
  */
 function isSuumoStationPath(param: string): boolean {
-  // 旧形式 "kanagawa/eki_musashikosugi" と新形式 "kanagawa/ek_38720" の両方に対応
-  return /^[a-z]+\/eki?_[a-z0-9]+$/.test(param)
+  // ek_XXXXX（数値コード）形式のみ有効。eki_xxx（名前ベース）はSUUMO側で廃止・404のため除外
+  return /^[a-z]+\/ek_\d+$/.test(param)
+}
+
+/** eki_xxx（名前ベース・廃止）形式かどうか判定 */
+function isSuumoOldEkiName(param: string): boolean {
+  return /^[a-z]+\/eki_[a-z0-9_-]+$/.test(param)
 }
 
 /**
@@ -428,7 +433,21 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
   if (otherFlags.corner)   extraParts.push('kkr=1')
   if (otherFlags.topFloor) extraParts.push('kk=1')
 
-  // ── 1. 駅パス形式エントリ ────────────────────────────────────────────
+  // ── 0. eki_xxx（廃止形式）の検出・警告 ───────────────────────────────
+  // eki_形式は SUUMO 側で廃止され全件404。isSuumoStationPath() が false を返すため
+  // ta+sc グループ処理でも ta= が取れず URL が生成されない。
+  // 該当エントリを検出して警告だけ出す（URL生成は ta+sc 形式レコードに委ねる）。
+  for (const r of resolved) {
+    if (r.mapping && isSuumoOldEkiName(r.mapping.portal_url_param)) {
+      warnings.push(
+        `駅URL未確認のため、市区町村検索へ一時的に切り替え（${r.inputName}: ${r.mapping.portal_url_param} は廃止形式）。` +
+        '正しい ek_数値コードを portal_area_params へ登録してください。'
+      )
+      console.warn('[portalUrlBuilder] eki_形式は廃止・404のためスキップ:', r.mapping.portal_url_param)
+    }
+  }
+
+  // ── 1. 駅パス形式エントリ（ek_数値コードのみ） ───────────────────────
   const stationPathMatches = resolved.filter(r => r.mapping && isSuumoStationPath(r.mapping.portal_url_param))
 
   for (const r of stationPathMatches) {
