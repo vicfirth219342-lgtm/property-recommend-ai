@@ -399,7 +399,8 @@ function suumoStationTypeSegment(propertyType: string | null, isSale: boolean): 
     return 'ms/chuko'
   } else {
     if (pt.includes('戸建') || pt.includes('一戸建')) return 'chintai/ikkodate'
-    return 'chintai/mansion'
+    // 賃貸マンション: chintai/{pref}/ek_XXXXX/ が正しいパス（chintai/mansion は404）
+    return 'chintai'
   }
 }
 
@@ -458,8 +459,9 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
       if (cond.budget_min) qParts.push(`kb=${cond.budget_min}`)
       if (cond.budget_max) qParts.push(`kt=${cond.budget_max}`)
     } else {
-      if (cond.rent_min) qParts.push(`cb=${cond.rent_min}`)
-      if (cond.rent_max) qParts.push(`ct=${cond.rent_max}`)
+      // 賃貸: srm/srM は円単位（rent_min/max は万円 → ×10000）
+      if (cond.rent_min) qParts.push(`srm=${cond.rent_min * 10000}`)
+      if (cond.rent_max) qParts.push(`srM=${cond.rent_max * 10000}`)
     }
     if (cond.area_sqm_min) qParts.push(`mb=${Math.floor(cond.area_sqm_min)}`)
     if (cond.area_sqm_max) qParts.push(`mt=${Math.ceil(cond.area_sqm_max)}`)
@@ -506,7 +508,8 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
       bs: isSale ? '011' : '040',
       ta: g.ta,
     }
-    if (tc) base.tc = tc
+    // tc は売買のみ（賃貸FR301FC001にtcを付けるとエラー画面になる）
+    if (tc && isSale) base.tc = tc
 
     let qs = new URLSearchParams(base).toString()
     for (const code of g.codes) qs += `&${code}`
@@ -515,8 +518,9 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
       if (cond.budget_min) qs += `&kb=${cond.budget_min}`
       if (cond.budget_max) qs += `&kt=${cond.budget_max}`
     } else {
-      if (cond.rent_min) qs += `&cb=${cond.rent_min}`
-      if (cond.rent_max) qs += `&ct=${cond.rent_max}`
+      // 賃貸: srm/srM は円単位（rent_min/max は万円 → ×10000）
+      if (cond.rent_min) qs += `&srm=${cond.rent_min * 10000}`
+      if (cond.rent_max) qs += `&srM=${cond.rent_max * 10000}`
     }
     if (cond.area_sqm_min) qs += `&mb=${Math.floor(cond.area_sqm_min)}`
     if (cond.area_sqm_max) qs += `&mt=${Math.ceil(cond.area_sqm_max)}`
@@ -548,14 +552,16 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
     }
     // エリア未指定 → デフォルトフォールバック（関東）
     const base: Record<string, string> = { ar: '030', bs: isSale ? '011' : '040' }
-    if (tc) base.tc = tc
+    // tc は売買のみ（賃貸にtcを付けるとエラー画面になる）
+    if (tc && isSale) base.tc = tc
     let qs = new URLSearchParams(base).toString()
     if (isSale) {
       if (cond.budget_min) qs += `&kb=${cond.budget_min}`
       if (cond.budget_max) qs += `&kt=${cond.budget_max}`
     } else {
-      if (cond.rent_min) qs += `&cb=${cond.rent_min}`
-      if (cond.rent_max) qs += `&ct=${cond.rent_max}`
+      // 賃貸: srm/srM は円単位（rent_min/max は万円 → ×10000）
+      if (cond.rent_min) qs += `&srm=${cond.rent_min * 10000}`
+      if (cond.rent_max) qs += `&srM=${cond.rent_max * 10000}`
     }
     if (cond.area_sqm_min) qs += `&mb=${Math.floor(cond.area_sqm_min)}`
     if (wk) qs += `&et=${wk}`
