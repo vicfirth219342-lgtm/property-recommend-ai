@@ -30,6 +30,38 @@ interface CustomerWithCondition {
 
 type JobStatus = 'idle' | 'pending' | 'running' | 'completed' | 'failed'
 
+// -------------------------------------------------------
+// 一括検索モード用の型
+// -------------------------------------------------------
+interface BulkJobResult {
+  id: string
+  portal: string
+  status: string
+  fetched_count: number
+  new_count: number
+  duplicate_count: number
+  error_message: string | null
+}
+
+interface BulkRunResponse {
+  ok?: boolean
+  error?: string
+  job_id?: string
+  status?: string
+  total_fetched?: number
+  total_new?: number
+  total_duplicates?: number
+  total_matched?: number
+  total_manual_check?: number
+  errors?: string[]
+}
+
+const BULK_PORTAL_LABEL: Record<string, string> = { suumo: 'SUUMO', homes: "HOME'S", athome: 'アットホーム' }
+const BULK_RESULT_STATUS_LABEL: Record<string, string> = {
+  completed: '完了', no_results: '0件取得', url_missing: 'URL未生成',
+  fetch_error: '失敗（取得エラー）', save_error: '失敗（保存エラー）', timeout: '失敗（タイムアウト）',
+}
+
 interface CrawlJob {
   id: string
   status: JobStatus
@@ -210,11 +242,28 @@ function UrlCard({
   searchUrl,
   selected,
   onSelect,
+  onDeactivated,
 }: {
   searchUrl: CustomerSearchUrl
   selected: boolean
   onSelect: () => void
+  onDeactivated: () => void
 }) {
+  const [deactivating, setDeactivating] = useState(false)
+
+  async function handleDeactivate(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!confirm('このURLを無効化しますか？（削除はされません。再度有効化したい場合はSupabaseから is_active を戻してください）')) return
+    setDeactivating(true)
+    const res = await fetch(`/api/search-urls/${searchUrl.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active: false }),
+    })
+    setDeactivating(false)
+    if (res.ok) onDeactivated()
+  }
+
   return (
     <div
       onClick={onSelect}
@@ -265,11 +314,376 @@ function UrlCard({
         </div>
         <button
           type="button"
+          onClick={handleDeactivate}
+          disabled={deactivating}
+          className="text-xs text-red-400 hover:text-red-600 border border-red-200 rounded px-2 py-0.5 bg-white flex-shrink-0 disabled:opacity-40"
+        >
+          {deactivating ? '無効化中...' : '無効化'}
+        </button>
+        <button
+          type="button"
           onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(searchUrl.url) }}
           className="text-xs text-slate-400 hover:text-slate-700 border border-slate-200 rounded px-2 py-0.5 bg-white flex-shrink-0"
         >
           コピー
         </button>
+      </div>
+    </div>
+  )
+}
+
+// 一括検索の結果1行（○/△アイコン付き）
+function BulkResultRow({ r }: { r: BulkJobResult }) {
+  const ok = r.status === 'completed' || r.status === 'no_results'
+  const icon = ok ? '○' : '△'
+  const iconColor = ok ? 'text-green-600' : 'text-amber-500'
+  return (
+    <div className="flex items-center gap-2 text-sm py-1.5">
+      <span className={`font-bold ${iconColor}`}>{icon}</span>
+      <span className="font-medium text-slate-700 w-24 flex-shrink-0">{BULK_PORTAL_LABEL[r.portal] ?? r.portal}</span>
+      {ok ? (
+        <span className="text-slate-600">
+          {r.status === 'no_results' ? '0件取得' : `完了 ${r.fetched_count}件（新規${r.new_count}）`}
+        </span>
+      ) : (
+        <span className="text-amber-600">
+          {BULK_RESULT_STATUS_LABEL[r.status] ?? '失敗'}
+          {r.error_message && <span className="text-slate-400 ml-1">— {r.error_message}</span>}
+        </span>
+      )}
+    </div>
+  )
+}
+
+// -------------------------------------------------------
+// 手動取込パネル
+// -------------------------------------------------------
+interface MiCandidate {
+  id: string
+  file_id: string
+  portal: string
+  property_name: string | null
+  price: number | null
+  area_sqm: number | null
+  layout: string | null
+  built_year: number | null
+  walk_minutes: number | null
+  detail_url: string | null
+  parse_status: string
+  duplicate_status: string
+  is_selected: boolean
+  missing_fields: string[]
+}
+interface MiFile {
+  id: string
+  file_name: string | null
+  page_number: number | null
+  status: string
+  detected_count: number
+  error_message: string | null
+}
+interface MiJob {
+  id: string
+  status: string
+  file_count: number
+  files_parsed: number
+  detected_count: number
+  new_count: number
+  duplicate_count: number
+  needs_manual_check_count: number
+  missing_pages: number[]
+  error_summary: string | null
+}
+interface MiJobHistoryRow extends MiJob {
+  created_at: string
+  portal: string
+  customers?: { name: string }
+}
+
+const MI_PORTAL_LABEL: Record<string, string> = { suumo: 'SUUMO', homes: "HOME'S", athome: 'アットホーム' }
+
+function ManualImportPanel({ customers }: { customers: CustomerWithCondition[] }) {
+  const [customerId, setCustomerId] = useState(customers[0]?.id ?? '')
+  const [portal, setPortal] = useState<'suumo' | 'homes' | 'athome'>('suumo')
+  const [htmlFiles, setHtmlFiles] = useState<FileList | null>(null)
+  const [zipFile, setZipFile] = useState<File | null>(null)
+  const [htmlText, setHtmlText] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const [job, setJob] = useState<MiJob | null>(null)
+  const [files, setFiles] = useState<MiFile[]>([])
+  const [candidates, setCandidates] = useState<MiCandidate[]>([])
+  const [confirming, setConfirming] = useState(false)
+  const [confirmResult, setConfirmResult] = useState<{ new_count: number; matched: number; manual_check: number; no_match: number; save_errors: number; status: string } | null>(null)
+  const [history, setHistory] = useState<MiJobHistoryRow[]>([])
+
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const loadHistory = useCallback(() => {
+    fetch(`/api/portal-search/manual-import/jobs${customerId ? `?customer_id=${customerId}` : ''}`)
+      .then(r => r.json()).then(d => setHistory(d.jobs ?? [])).catch(() => {})
+  }, [customerId])
+
+  useEffect(() => { loadHistory() }, [loadHistory])
+  useEffect(() => () => { if (pollRef.current) clearTimeout(pollRef.current) }, [])
+
+  async function loadJobDetail(jobId: string) {
+    const res = await fetch(`/api/portal-search/manual-import/jobs/${jobId}`)
+    if (!res.ok) return
+    const data = await res.json()
+    setJob(data.job)
+    setFiles(data.files ?? [])
+    setCandidates(data.candidates ?? [])
+    return data.job as MiJob
+  }
+
+  async function runNextBatch(jobId: string) {
+    const res = await fetch('/api/portal-search/manual-import/batch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_id: jobId }),
+    })
+    const data = await res.json().catch(() => null)
+    if (!res.ok || !data) {
+      setError(data?.error ?? 'バッチ解析に失敗しました')
+      return
+    }
+    await loadJobDetail(jobId)
+    if (!data.done) {
+      pollRef.current = setTimeout(() => runNextBatch(jobId), 300)
+    } else {
+      loadHistory()
+    }
+  }
+
+  async function handleUpload(e: React.FormEvent) {
+    e.preventDefault()
+    if (!customerId) return
+    if ((!htmlFiles || htmlFiles.length === 0) && !zipFile && !htmlText.trim()) {
+      setError('HTMLファイル・ZIP・HTML貼り付けのいずれかを指定してください')
+      return
+    }
+    setSubmitting(true)
+    setError(null)
+    setJob(null); setFiles([]); setCandidates([]); setConfirmResult(null)
+
+    const form = new FormData()
+    form.append('customer_id', customerId)
+    form.append('portal', portal)
+    if (htmlFiles) for (const f of Array.from(htmlFiles)) form.append('html_files', f)
+    if (zipFile) form.append('zip_file', zipFile)
+    if (htmlText.trim()) form.append('html_text', htmlText)
+
+    try {
+      const res = await fetch('/api/portal-search/manual-import/init', { method: 'POST', body: form })
+      const data = await res.json()
+      if (!res.ok) { setError(data.error ?? '取込の開始に失敗しました'); setSubmitting(false); return }
+      await loadJobDetail(data.job_id)
+      runNextBatch(data.job_id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function toggleCandidate(c: MiCandidate) {
+    const next = !c.is_selected
+    setCandidates(prev => prev.map(x => x.id === c.id ? { ...x, is_selected: next } : x))
+    if (!job) return
+    await fetch(`/api/portal-search/manual-import/jobs/${job.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ candidates: [{ id: c.id, is_selected: next }] }),
+    })
+  }
+
+  async function handleConfirm() {
+    if (!job) return
+    setConfirming(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/portal-search/manual-import/confirm', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: job.id }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setError(data.error ?? '確定保存に失敗しました'); return }
+      setConfirmResult(data)
+      await loadJobDetail(job.id)
+      loadHistory()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setConfirming(false)
+    }
+  }
+
+  const isParsing = job && job.status !== 'previewed' && job.status !== 'completed' && job.status !== 'partial_failed' && job.status !== 'failed'
+  const normalCandidates = candidates.filter(c => c.parse_status === 'ok')
+  const needsCheckCandidates = candidates.filter(c => c.parse_status === 'needs_manual_check')
+
+  return (
+    <div className="space-y-6">
+      <form onSubmit={handleUpload} className="bg-white rounded-xl border border-slate-200 p-6 space-y-5">
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">対象顧客</label>
+          <select className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm"
+            value={customerId} onChange={e => setCustomerId(e.target.value)}>
+            {customers.map(c => <option key={c.id} value={c.id}>{c.customer_no} — {c.name}</option>)}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-2">対象ポータル</label>
+          <div className="flex gap-2">
+            {(['suumo', 'homes', 'athome'] as const).map(p => (
+              <button key={p} type="button" onClick={() => setPortal(p)}
+                className={`px-3 py-1.5 rounded-lg text-sm border-2 transition-colors ${
+                  portal === p ? 'border-slate-700 bg-slate-50 font-semibold text-slate-800' : 'border-slate-200 text-slate-600 hover:border-slate-400'
+                }`}>
+                {MI_PORTAL_LABEL[p]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">HTMLファイル（複数選択可）</label>
+          <input type="file" multiple accept=".html,.htm" onChange={e => setHtmlFiles(e.target.files)}
+            className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2" />
+          <p className="text-xs text-slate-400 mt-1">page1.html, page2.html のように複数ページを一度に選択できます</p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">ZIPファイル</label>
+          <input type="file" accept=".zip" onChange={e => setZipFile(e.target.files?.[0] ?? null)}
+            className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2" />
+          <p className="text-xs text-slate-400 mt-1">
+            上限: ZIP 50MB／展開後合計 200MB／HTMLファイル数 200／1ファイル 5MB。画像・CSS・JSは無視されます
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">HTMLソース貼り付け（任意）</label>
+          <textarea value={htmlText} onChange={e => setHtmlText(e.target.value)} rows={4}
+            placeholder="ブラウザの「ページのソースを表示」またはdocument.documentElement.outerHTMLの内容を貼り付け"
+            className="w-full text-xs font-mono border border-slate-200 rounded-lg px-3 py-2" />
+        </div>
+
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+          推奨保存方法: ブラウザで検索結果ページを開き「ページのソースを表示」→全選択コピー→保存、または「名前を付けて保存」で
+          <strong>「HTMLのみ」</strong>を選択してください。「ウェブページ、完全」は検索結果DOMが欠落する場合があります。
+        </div>
+
+        {error && <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700 whitespace-pre-wrap">{error}</div>}
+
+        <button type="submit" disabled={submitting || !customerId}
+          className="w-full bg-slate-800 text-white py-2.5 rounded-lg font-semibold hover:bg-slate-700 disabled:opacity-40 transition-colors">
+          {submitting ? 'アップロード中...' : '取込を開始（プレビュー）'}
+        </button>
+      </form>
+
+      {job && (
+        <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
+          <div className="flex items-center gap-3">
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+              job.status === 'previewed' ? 'bg-blue-100 text-blue-700' :
+              job.status === 'completed' ? 'bg-green-100 text-green-700' :
+              job.status === 'partial_failed' ? 'bg-amber-100 text-amber-700' :
+              job.status === 'failed' ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-600'
+            }`}>
+              {job.status}
+            </span>
+            {isParsing && (
+              <span className="text-sm text-slate-500">
+                解析中... {job.files_parsed} / {job.file_count} ファイル処理済み
+              </span>
+            )}
+          </div>
+
+          {job.missing_pages.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+              ⚠ {job.missing_pages.join('・')}ページ目が不足しています
+            </div>
+          )}
+
+          {job.status === 'previewed' && (
+            <>
+              <div className="flex gap-4 text-sm text-slate-600">
+                <span>検出 <strong>{job.detected_count}</strong></span>
+                <span className="text-slate-400">重複 {job.duplicate_count}</span>
+                <span className="text-amber-600">要手動確認 {job.needs_manual_check_count}</span>
+              </div>
+
+              <div className="max-h-96 overflow-y-auto border border-slate-100 rounded-lg divide-y divide-slate-100">
+                {normalCandidates.map(c => (
+                  <label key={c.id} className={`flex items-center gap-3 px-3 py-2 text-sm cursor-pointer ${c.duplicate_status !== 'new' ? 'opacity-50' : ''}`}>
+                    <input type="checkbox" checked={c.is_selected} onChange={() => toggleCandidate(c)} className="w-4 h-4" />
+                    <span className="flex-1 truncate">{c.property_name}</span>
+                    <span className="text-slate-500 w-24 text-right">{c.price ? `${Math.round(c.price / 10000).toLocaleString()}万円` : '—'}</span>
+                    <span className="text-slate-400 w-16 text-right">{c.area_sqm ?? '—'}㎡</span>
+                    {c.duplicate_status !== 'new' && <span className="text-xs text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">{c.duplicate_status}</span>}
+                  </label>
+                ))}
+              </div>
+
+              {needsCheckCandidates.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-amber-700 mb-1">NEED_MANUAL_CHECK（athome必須項目不足・保存対象外）</p>
+                  <div className="max-h-56 overflow-y-auto border border-amber-100 bg-amber-50 rounded-lg divide-y divide-amber-100">
+                    {needsCheckCandidates.map(c => {
+                      const f = files.find(f => f.id === c.file_id)
+                      return (
+                        <div key={c.id} className="px-3 py-2 text-xs text-amber-800">
+                          <div>{c.property_name || '（物件名不明）'} | {c.price ? `${Math.round(c.price / 10000)}万円` : '価格不明'} | {c.detail_url || 'URL不明'}</div>
+                          <div className="text-amber-500">不足: {c.missing_fields.join('・')} / ファイル: {f?.file_name} (page {f?.page_number ?? '—'})</div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <button onClick={handleConfirm} disabled={confirming}
+                className="w-full bg-green-700 text-white py-2.5 rounded-lg font-semibold hover:bg-green-800 disabled:opacity-40 transition-colors">
+                {confirming ? '確定中...' : '全件取込を確定'}
+              </button>
+            </>
+          )}
+
+          {confirmResult && (
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm text-slate-700">
+              新規保存 {confirmResult.new_count} / MATCH {confirmResult.matched} / NEED_MANUAL_CHECK {confirmResult.manual_check} / NO_MATCH {confirmResult.no_match}
+              {confirmResult.save_errors > 0 && <span className="text-red-600"> / 保存失敗 {confirmResult.save_errors}</span>}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div>
+        <h3 className="text-sm font-semibold text-slate-600 mb-2">手動取込履歴</h3>
+        {history.length === 0 ? (
+          <div className="text-center text-slate-400 py-8 bg-white rounded-xl border border-slate-200 text-sm">まだ手動取込を実行していません</div>
+        ) : (
+          <div className="space-y-1.5">
+            {history.map(h => (
+              <div key={h.id} className="bg-white border border-slate-200 rounded-lg px-4 py-2.5 text-xs flex items-center gap-3">
+                <span className="text-slate-400">{new Date(h.created_at).toLocaleString('ja-JP')}</span>
+                <span className="text-slate-600">{h.customers?.name}</span>
+                <span className="font-medium">{MI_PORTAL_LABEL[h.portal] ?? h.portal}</span>
+                <span className="text-slate-500">{h.file_count}ページ</span>
+                <span>検出{h.detected_count}</span>
+                <span className="text-green-600">新規{h.new_count}</span>
+                <span className="text-slate-400">重複{h.duplicate_count}</span>
+                <span className="text-amber-600">要確認{h.needs_manual_check_count}</span>
+                <span className={`ml-auto px-2 py-0.5 rounded-full ${
+                  h.status === 'completed' ? 'bg-green-100 text-green-700' :
+                  h.status === 'partial_failed' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'
+                }`}>{h.status}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -282,6 +696,8 @@ export default function ManualCrawlPage() {
   const [customers, setCustomers]   = useState<CustomerWithCondition[]>([])
   const [loading, setLoading]       = useState(true)
 
+  const [searchMode, setSearchMode] = useState<'single' | 'bulk' | 'manual_import'>('single')
+
   const [customerId, setCustomerId] = useState('')
   const [portal, setPortal]         = useState('suumo')
   const [maxPages, setMaxPages]     = useState(3)
@@ -289,6 +705,13 @@ export default function ManualCrawlPage() {
   const [manualMode, setManualMode] = useState(false)
   const [manualUrl, setManualUrl]   = useState('')
   const [showUrlPanel, setShowUrlPanel] = useState(false)
+
+  // 一括検索モード用
+  const [bulkPortals, setBulkPortals] = useState<Record<string, boolean>>({ suumo: true, homes: true, athome: true })
+  const [bulkRunning, setBulkRunning] = useState(false)
+  const [bulkError, setBulkError]     = useState<string | null>(null)
+  const [bulkSummary, setBulkSummary] = useState<BulkRunResponse | null>(null)
+  const [bulkResults, setBulkResults] = useState<BulkJobResult[]>([])
 
   const [regenerating, setRegenerating] = useState(false)
   const [regenResult, setRegenResult]   = useState<string | null>(null)
@@ -343,6 +766,51 @@ export default function ManualCrawlPage() {
     setManualUrl('')
     setRegenResult(null)
   }, [customerId, portal])
+
+  // 一括検索モードに切り替えたら前回結果をクリア
+  useEffect(() => {
+    setBulkSummary(null)
+    setBulkResults([])
+    setBulkError(null)
+  }, [customerId, searchMode])
+
+  // 一括検索実行（SUUMO → 30秒待機 → HOME'S → 30秒待機 → athome の順にAPI側で実行される）
+  async function runBulkSearch() {
+    if (!customerId) return
+    const portals = Object.entries(bulkPortals).filter(([, v]) => v).map(([k]) => k)
+    if (portals.length === 0) {
+      setBulkError('ポータルを1つ以上選択してください')
+      return
+    }
+    setBulkRunning(true)
+    setBulkError(null)
+    setBulkSummary(null)
+    setBulkResults([])
+    try {
+      const res = await fetch('/api/portal-search/run-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customer_id: customerId, portals, created_by: 'manual-crawl-ui' }),
+      })
+      const data: BulkRunResponse = await res.json()
+      if (!res.ok || !data.ok) {
+        setBulkError(data.error ?? '一括検索の実行に失敗しました')
+        return
+      }
+      setBulkSummary(data)
+      if (data.job_id) {
+        const detailRes = await fetch(`/api/portal-search/jobs/${data.job_id}`)
+        if (detailRes.ok) {
+          const detail = await detailRes.json()
+          setBulkResults(detail.results ?? [])
+        }
+      }
+    } catch (e) {
+      setBulkError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBulkRunning(false)
+    }
+  }
 
   function startPolling(jobId: string) {
     setElapsed(0)
@@ -456,6 +924,150 @@ export default function ManualCrawlPage() {
         </p>
       </div>
 
+      {/* ---- モード切替 ---- */}
+      <div className="flex gap-2 mb-4">
+        <button
+          type="button"
+          onClick={() => setSearchMode('single')}
+          className={`px-4 py-1.5 rounded-lg text-sm border-2 transition-colors ${
+            searchMode === 'single'
+              ? 'border-slate-700 bg-slate-50 font-semibold text-slate-800'
+              : 'border-slate-200 text-slate-500 hover:border-slate-400'
+          }`}
+        >
+          単一ポータル
+        </button>
+        <button
+          type="button"
+          onClick={() => setSearchMode('bulk')}
+          className={`px-4 py-1.5 rounded-lg text-sm border-2 transition-colors ${
+            searchMode === 'bulk'
+              ? 'border-slate-700 bg-slate-50 font-semibold text-slate-800'
+              : 'border-slate-200 text-slate-500 hover:border-slate-400'
+          }`}
+        >
+          一括検索（複数ポータル）
+        </button>
+        <button
+          type="button"
+          onClick={() => setSearchMode('manual_import')}
+          className={`px-4 py-1.5 rounded-lg text-sm border-2 transition-colors ${
+            searchMode === 'manual_import'
+              ? 'border-slate-700 bg-slate-50 font-semibold text-slate-800'
+              : 'border-slate-200 text-slate-500 hover:border-slate-400'
+          }`}
+        >
+          手動取込
+        </button>
+      </div>
+
+      {/* ==================================================== */}
+      {/* 手動取込モード */}
+      {/* ==================================================== */}
+      {searchMode === 'manual_import' && (
+        <ManualImportPanel customers={customers} />
+      )}
+
+      {/* ==================================================== */}
+      {/* 一括検索モード */}
+      {/* ==================================================== */}
+      {searchMode === 'bulk' && (
+        <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6 space-y-5">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">対象顧客</label>
+            <select
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
+              value={customerId}
+              onChange={e => setCustomerId(e.target.value)}
+            >
+              {customers.map(c => (
+                <option key={c.id} value={c.id}>{c.customer_no} — {c.name}</option>
+              ))}
+            </select>
+            {condition ? (
+              <p className="text-xs mt-1.5 ml-0.5">
+                <span className="text-slate-400">希望条件: </span>
+                <ConditionSummary cond={condition} />
+              </p>
+            ) : customerId ? (
+              <p className="text-xs text-amber-600 mt-1.5 ml-0.5">
+                希望条件が未登録です。顧客詳細から条件を入力してください。
+              </p>
+            ) : null}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">対象ポータル（複数選択可）</label>
+            <div className="flex gap-5">
+              {PORTALS.map(p => (
+                <label key={p.key} className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={bulkPortals[p.key] ?? false}
+                    onChange={e => setBulkPortals(s => ({ ...s, [p.key]: e.target.checked }))}
+                    className="w-4 h-4"
+                  />
+                  {p.label}
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-slate-400 mt-2">
+              実行順は SUUMO → 30秒待機 → HOME&apos;S → 30秒待機 → アットホーム に固定されます（bot対策）。
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={runBulkSearch}
+            disabled={bulkRunning || !customerId}
+            className="w-full bg-slate-800 text-white py-2.5 rounded-lg font-semibold hover:bg-slate-700 disabled:opacity-40 transition-colors"
+          >
+            {bulkRunning ? '検索中...（数分かかります）' : '今すぐ検索'}
+          </button>
+
+          {bulkError && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700 whitespace-pre-wrap">
+              {bulkError}
+            </div>
+          )}
+
+          {bulkSummary && (
+            <div className="border-t border-slate-100 pt-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                  bulkSummary.status === 'completed' ? 'bg-green-100 text-green-700' :
+                  bulkSummary.status === 'partial_failed' ? 'bg-amber-100 text-amber-700' :
+                  'bg-red-100 text-red-600'
+                }`}>
+                  {bulkSummary.status === 'completed' ? '完了' :
+                   bulkSummary.status === 'partial_failed' ? '一部失敗' : '失敗'}
+                </span>
+                <span className="text-sm text-slate-600">
+                  取得 <strong>{bulkSummary.total_fetched ?? 0}</strong> ／
+                  重複 {bulkSummary.total_duplicates ?? 0} ／
+                  条件一致 <strong className="text-green-600">{bulkSummary.total_matched ?? 0}</strong> ／
+                  要手動確認 {bulkSummary.total_manual_check ?? 0}
+                </span>
+              </div>
+
+              {/* ポータル別結果一覧（○/△） */}
+              <div className="bg-slate-50 rounded-lg px-4 py-2 divide-y divide-slate-200">
+                {bulkResults.length === 0 ? (
+                  <p className="text-xs text-slate-400 py-2">結果を読み込み中...</p>
+                ) : (
+                  bulkResults.map(r => <BulkResultRow key={r.id} r={r} />)
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* 単一ポータルモード */}
+      {/* ==================================================== */}
+      {searchMode === 'single' && (
+      <>
       <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-slate-200 p-6 mb-6 space-y-5">
 
         {/* ---- 顧客選択 ---- */}
@@ -545,6 +1157,7 @@ export default function ManualCrawlPage() {
                         searchUrl={u}
                         selected={selectedUrl?.id === u.id}
                         onSelect={() => setSelectedUrlId(u.id)}
+                        onDeactivated={() => fetchCustomers()}
                       />
                     ))}
                   </div>
@@ -679,6 +1292,7 @@ export default function ManualCrawlPage() {
           )}
         </div>
       )}
+      </>)}
     </div>
   )
 }

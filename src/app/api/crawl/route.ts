@@ -214,6 +214,11 @@ function resolveUrlMaxPages(
   }
 }
 
+// 売買価格を円→万円に変換（クローラーは円単位で返すが、DB・照合ロジックは万円前提）
+function yenToMan(price: number | null | undefined): number | null {
+  return price != null ? Math.round(price / 10000) : null
+}
+
 // 新規物件を挿入
 async function saveProperties(
   supabase: ReturnType<typeof createServiceClient>,
@@ -236,8 +241,8 @@ async function saveProperties(
         transaction_type: prop.transaction_type,
         name: prop.name,
         address: prop.address,
-        price: prop.price,
-        current_price: prop.transaction_type === 'rent' ? prop.monthly_rent : prop.price,
+        price: yenToMan(prop.price),
+        current_price: prop.transaction_type === 'rent' ? prop.monthly_rent : yenToMan(prop.price),
         monthly_rent: prop.monthly_rent ?? null,
         management_fee: prop.management_fee ?? null,
         repair_fund: prop.repair_fund ?? null,
@@ -311,9 +316,10 @@ async function updateSeenProperties(
 
     const updates: Record<string, unknown> = {}
 
-    if (prop.price !== null && ex.current_price !== prop.price) {
+    const priceMan = yenToMan(prop.price)
+    if (priceMan !== null && ex.current_price !== priceMan) {
       updates.last_price = ex.current_price
-      updates.current_price = prop.price
+      updates.current_price = priceMan
     }
     // 再クロール時に築年月を更新（より正確なデータで上書き）
     if (prop.built_year !== null && prop.built_year !== undefined) {

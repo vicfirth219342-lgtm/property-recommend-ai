@@ -41,6 +41,7 @@ function conditionHash(cond: CustomerCondition): string {
     String(cond.area_sqm_max ?? ''),
     String(cond.walk_minutes_max ?? ''),
     String(cond.building_age_max ?? ''),
+    cond.other_conditions ?? '',
   ].join('|')
 
   let hash = 5381
@@ -142,6 +143,37 @@ export async function generateAndSaveUrls(
 
         if (insErr) {
           console.error(`[urlGenerationService] upsert error (${portal}):`, insErr.message)
+        }
+      }
+
+      // 未解決エリアを unresolved_area_mappings に upsert（重複は occurrence_count++ / last_seen_at 更新）
+      if (result.unresolvedAreas.length > 0) {
+        const now = new Date().toISOString()
+        for (const name of result.unresolvedAreas) {
+          // 既存行を検索
+          const { data: existing } = await db
+            .from('unresolved_area_mappings')
+            .select('id, occurrence_count')
+            .eq('portal', portal)
+            .eq('raw_area_name', name)
+            .is('prefecture', null)
+            .maybeSingle()
+
+          if (existing) {
+            // 既存: count++ & last_seen_at 更新
+            await db
+              .from('unresolved_area_mappings')
+              .update({ occurrence_count: (existing.occurrence_count ?? 1) + 1, last_seen_at: now })
+              .eq('id', existing.id)
+          } else {
+            // 新規: INSERT
+            await db.from('unresolved_area_mappings').insert({
+              portal,
+              raw_area_name: name,
+              normalized_area_name: name,
+              last_seen_at: now,
+            })
+          }
         }
       }
 

@@ -19,6 +19,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <a href="/customers" className="hover:text-slate-300 text-sm">顧客管理</a>
           <a href="/manual-crawl" className="hover:text-slate-300 text-sm">手動探索</a>
           <a href="/reins-check" className="hover:text-slate-300 text-sm">レインズ掲載確認</a>
+          <a href="/reins-queue" className="hover:text-slate-300 text-sm">照合キュー</a>
+          <a href="/admin/portal-area-mappings" className="hover:text-slate-300 text-sm">エリア管理</a>
         </nav>
         <main className="min-h-screen bg-slate-50">{children}</main>
       </body>

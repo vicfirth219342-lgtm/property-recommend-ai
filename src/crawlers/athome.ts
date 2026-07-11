@@ -43,9 +43,13 @@ async function parseTotalCount(page: import('playwright').Page): Promise<{ total
   }
 }
 
-async function scrapeOnePage(page: import('playwright').Page, transactionType: import('@/types').TransactionType = 'sale'): Promise<ScrapedProperty[]> {
+export async function scrapeOnePage(page: import('playwright').Page, transactionType: import('@/types').TransactionType = 'sale'): Promise<ScrapedProperty[]> {
   const properties: ScrapedProperty[] = []
+  // .card-box.open が実際の物件カード。.bukken-item はカード内の画像スワイパー要素であり
+  // 物件情報を持たないため、カードのルート候補にしてはならない（誤って0件になるバグの原因だった）
   const selectors = [
+    '.card-box.open',
+    '.card-box',
     '[class*="propertyList"] li',
     '.bukken-item',
     '[data-testid="property-card"]',
@@ -55,16 +59,31 @@ async function scrapeOnePage(page: import('playwright').Page, transactionType: i
 
   let items: import('playwright').ElementHandle[] = []
   for (const sel of selectors) {
-    items = await page.$$(sel)
-    if (items.length > 0) break
+    const candidates = await page.$$(sel)
+    if (candidates.length === 0) continue
+    // 採用前に検証: 先頭要素から物件名・価格・詳細URLが取得できるセレクタのみ採用する
+    const sample = candidates[0]
+    const sampleName = await sample.$eval(
+      '[class*="title"], [class*="name"], h2, h3',
+      (el) => el.textContent?.trim() ?? ''
+    ).catch(() => '')
+    const sampleUrl = await sample.$eval('a', (el) => (el as HTMLAnchorElement).href).catch(() => '')
+    const sampleText = await sample.evaluate((el) => el.textContent ?? '')
+    const samplePriceOk = /[\d,]+万円/.test(sampleText)
+    if (sampleName && sampleUrl && samplePriceOk) {
+      items = candidates
+      break
+    }
   }
 
   for (const item of items) {
     try {
-      const name = await item.$eval(
+      const nameRaw = await item.$eval(
         '[class*="title"], [class*="name"], h2, h3',
         (el) => el.textContent?.trim() ?? ''
       ).catch(() => '')
+      // 一部レイアウトでは物件名要素に価格が同居する（例: "○○マンション 3F ワンルーム\n850万円"）
+      const name = nameRaw.replace(/\s*[\d,]+万円\s*$/, '').replace(/\s+/g, ' ').trim()
 
       const url = await item.$eval('a', (el) => (el as HTMLAnchorElement).href).catch(() => '')
       const allText = await item.evaluate(el => el.textContent ?? '')
@@ -75,7 +94,7 @@ async function scrapeOnePage(page: import('playwright').Page, transactionType: i
 
       const priceMatch = allText.match(/([\d,]+)万円/)
       const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) * 10000 : null
-      const areaMatch = allText.match(/([\d.]+)\s*㎡/)
+      const areaMatch = allText.match(/([\d.]+)\s*(?:㎡|m²|m2)/)  // ㎡/m²/m2（m<sup>2</sup>のtextContent）の表記ゆれ対応
       const area_sqm = areaMatch ? parseFloat(areaMatch[1]) : null
       const floorMatch = allText.match(/([1-9][SLDK]+)/i)
       const floor_plan = floorMatch ? floorMatch[1].toUpperCase() : null
@@ -156,6 +175,18 @@ export async function crawlAthome(
       const pageUrl = buildPageUrl(sortedUrl, currentPage)
       await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 })
       await page.waitForTimeout(2000 + Math.random() * 1000)
+
+      // bot認証・404 を 0件取得と区別してエラーにする（データは捏造しない）
+      const pageTitle = await page.title().catch(() => '')
+      if (pageTitle.includes('認証にご協力')) {
+        throw new Error('bot認証ページが表示されました（アットホーム）。時間をおいて再実行してください')
+      }
+      if (pageTitle.includes('見つかりません')) {
+        throw new Error(`検索URLが無効です（404）: ${pageUrl}`)
+      }
+
+      // Angular SPA のため一覧の描画を待つ（最大10秒。現れなければそのまま解析）
+      await page.waitForSelector('a[href*="/mansion/"][href*="?"], [class*="bukken"] a, [class*="object"] a', { timeout: 10000 }).catch(() => {})
 
       if (currentPage === 1) {
         const counts = await parseTotalCount(page)

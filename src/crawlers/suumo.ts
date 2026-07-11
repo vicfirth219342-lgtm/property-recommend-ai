@@ -40,7 +40,7 @@ async function parseTotalCount(page: import('playwright').Page): Promise<{ total
   }
 }
 
-async function scrapeOnePage(page: import('playwright').Page, transactionType: import('@/types').TransactionType = 'sale'): Promise<ScrapedProperty[]> {
+export async function scrapeOnePage(page: import('playwright').Page, transactionType: import('@/types').TransactionType = 'sale'): Promise<ScrapedProperty[]> {
   const properties: ScrapedProperty[] = []
 
   const selectors = [
@@ -72,7 +72,7 @@ async function scrapeOnePage(page: import('playwright').Page, transactionType: i
 
       const priceMatch = allText.match(/([\d,]+)万円/)
       const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) * 10000 : null
-      const areaMatch = allText.match(/([\d.]+)\s*㎡/)
+      const areaMatch = allText.match(/([\d.]+)\s*(?:㎡|m²|m2)/)  // ㎡/m²/m2（m<sup>2</sup>のtextContent）の表記ゆれ対応
       const area_sqm = areaMatch ? parseFloat(areaMatch[1]) : null
       const floorMatch = allText.match(/([1-9][SLDK]+)/i)
       const floor_plan = floorMatch ? floorMatch[1].toUpperCase() : null
@@ -177,6 +177,12 @@ export async function crawlSuumo(
       const pageUrl = buildPageUrl(sortedUrl, currentPage)
       await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 })
       await page.waitForTimeout(1500 + Math.random() * 1000)
+
+      // 404・無効URLを 0件取得と区別してエラーにする（データは捏造しない）
+      const pageTitle = await page.title().catch(() => '')
+      if (pageTitle.includes('ページが見つかりません')) {
+        throw new Error(`検索URLが無効です（SUUMO 404）: ${pageUrl}`)
+      }
 
       if (currentPage === 1) {
         const counts = await parseTotalCount(page)

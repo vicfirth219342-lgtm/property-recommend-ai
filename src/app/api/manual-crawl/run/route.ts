@@ -108,8 +108,8 @@ export async function POST(req: NextRequest) {
             transaction_type: prop.transaction_type ?? 'sale',
             name: prop.name,
             address: prop.address,
-            price: prop.price,
-            current_price: prop.price,
+            price: yenToMan(prop.price),
+            current_price: yenToMan(prop.price),
             monthly_rent: prop.monthly_rent ?? null,
             management_fee: prop.management_fee ?? null,
             area_sqm: prop.area_sqm,
@@ -198,6 +198,11 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ error: msg }, { status: 500 })
   }
+}
+
+// 売買価格を円→万円に変換（クローラーは円単位で返すが、DB・照合ロジックは万円前提）
+function yenToMan(price: number | null | undefined): number | null {
+  return price != null ? Math.round(price / 10000) : null
 }
 
 function calcMatchScore(prop: ScrapedProperty, cond: Record<string, unknown> | null): number {

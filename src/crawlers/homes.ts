@@ -40,7 +40,7 @@ async function parseTotalCount(page: import('playwright').Page): Promise<{ total
   }
 }
 
-async function scrapeOnePage(page: import('playwright').Page, transactionType: import('@/types').TransactionType = 'sale'): Promise<ScrapedProperty[]> {
+export async function scrapeOnePage(page: import('playwright').Page, transactionType: import('@/types').TransactionType = 'sale'): Promise<ScrapedProperty[]> {
   const properties: ScrapedProperty[] = []
   const selectors = [
     '.mod-mergeBuilding--sale',
@@ -71,7 +71,7 @@ async function scrapeOnePage(page: import('playwright').Page, transactionType: i
 
       const priceMatch = allText.match(/([\d,]+)万円/)
       const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) * 10000 : null
-      const areaMatch = allText.match(/([\d.]+)\s*㎡/)
+      const areaMatch = allText.match(/([\d.]+)\s*(?:㎡|m²|m2)/)  // ㎡/m²/m2（m<sup>2</sup>のtextContent）の表記ゆれ対応
       const area_sqm = areaMatch ? parseFloat(areaMatch[1]) : null
       const floorMatch = allText.match(/([1-9][SLDK]+)/i)
       const floor_plan = floorMatch ? floorMatch[1].toUpperCase() : null
@@ -152,6 +152,21 @@ export async function crawlHomes(
       const pageUrl = buildPageUrl(sortedUrl, currentPage)
       await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 })
       await page.waitForTimeout(2000 + Math.random() * 1000)
+
+      // bot認証・無効URLを 0件取得と区別してエラーにする（データは捏造しない）
+      const pageTitle = await page.title().catch(() => '')
+      if (pageTitle.includes('ロボット') || pageTitle.includes('認証') || /human verification/i.test(pageTitle)) {
+        throw new Error("bot認証ページが表示されました（HOME'S）。時間をおいて再実行してください")
+      }
+      const finalUrl = page.url()
+      if (currentPage === 1) {
+        // リダイレクトで別ページ（キーワード検索・県トップ等）に落ちた場合をエラーにする
+        const reqPath = new URL(pageUrl).pathname
+        const finPath = new URL(finalUrl).pathname
+        if (!finalUrl.includes('/list') || finPath !== reqPath) {
+          throw new Error(`検索URLが無効です（一覧以外へリダイレクト）: ${pageUrl} → ${finalUrl}`)
+        }
+      }
 
       if (currentPage === 1) {
         const counts = await parseTotalCount(page)

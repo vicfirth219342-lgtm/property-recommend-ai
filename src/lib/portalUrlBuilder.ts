@@ -7,6 +7,7 @@
  * portal_url_param の形式:
  *   SUUMO city:    "ta=13&sc=13103"    ← ta (都道府県) + sc (市区町村JISコード)
  *   SUUMO station: "ta=14&ek=XXXXXX"   ← ta + ek (SUUMO独自駅コード)
+ *   SUUMO station path: "kanagawa/eki_musashikosugi" ← パスセグメント形式
  *   athome/homes:  "/tokyo/minato-city" ← パスセグメント
  */
 
@@ -36,13 +37,13 @@ export interface AreaMatch {
 }
 
 export interface BuildResult {
-  /** 生成されたURL群（SUUMO で複数都道府県にまたがる場合は複数） */
+  /** 生成されたURL群 */
   urls: { url: string; label: string }[]
   /** 照合できなかったエリア名 */
   unresolvedAreas: string[]
   /** 照合できたエリア名 */
   resolvedAreas: string[]
-  /** 警告メッセージ（複数都道府県・複数エリア非対応ポータル等） */
+  /** 警告メッセージ */
   warnings: string[]
   /** URL生成が可能かどうか */
   canGenerate: boolean
@@ -65,6 +66,82 @@ const SUUMO_AR: Record<string, string> = {
 }
 
 // -------------------------------------------------------
+// 間取りパラメータ
+// -------------------------------------------------------
+
+/**
+ * other_conditions テキストから間取りキーワードを抽出する。
+ * 「2LDK・3LDK」「3LDK以上」「1K〜2LDK」など様々な表記に対応。
+ */
+export function extractFloorPlanLabels(other: string | null): string[] {
+  if (!other) return []
+  const labels: string[] = []
+  // 4LDK以上 を先にチェック（4LDK より先にマッチさせる）
+  if (/4LDK以上|5[KLDK]+|6[KLDK]+/.test(other)) labels.push('4LDK以上')
+  else if (/4LDK/.test(other)) labels.push('4LDK')
+  if (/3LDK/.test(other)) labels.push('3LDK')
+  if (/3DK/.test(other)) labels.push('3DK')
+  if (/3K/.test(other)) labels.push('3K')
+  if (/2LDK/.test(other)) labels.push('2LDK')
+  if (/2DK/.test(other)) labels.push('2DK')
+  if (/2K/.test(other)) labels.push('2K')
+  if (/1LDK/.test(other)) labels.push('1LDK')
+  if (/1DK/.test(other)) labels.push('1DK')
+  // 1K は「1KD」「1LDK」にマッチしないよう後ろに境界を設ける
+  if (/1K(?![LD])/.test(other)) labels.push('1K')
+  if (/1R/.test(other)) labels.push('1R')
+  return labels
+}
+
+// SUUMO md= コードマップ
+const SUUMO_MD: Record<string, string> = {
+  '1R': '09', '1K': '10', '1DK': '11', '1LDK': '12',
+  '2K': '13', '2DK': '14', '2LDK': '15',
+  '3K': '16', '3DK': '17', '3LDK': '18',
+  '4K': '19', '4DK': '20', '4LDK': '21', '4LDK以上': '21',
+}
+
+// athome MADORI= コードマップ
+const ATHOME_MADORI: Record<string, string> = {
+  '1R': '01', '1K': '02', '1DK': '03', '1LDK': '04',
+  '2K': '05', '2DK': '06', '2LDK': '07',
+  '3K': '08', '3DK': '09', '3LDK': '10',
+  '4K': '11', '4DK': '12', '4LDK': '13', '4LDK以上': '13',
+}
+
+// HOME'S madori= コードマップ
+const HOMES_MADORI: Record<string, string> = {
+  '1R': '101', '1K': '102', '1DK': '103', '1LDK': '104',
+  '2K': '105', '2DK': '106', '2LDK': '107',
+  '3K': '108', '3DK': '109', '3LDK': '110',
+  '4K': '111', '4DK': '112', '4LDK': '113', '4LDK以上': '113',
+}
+
+// -------------------------------------------------------
+// その他条件パラメータ
+// -------------------------------------------------------
+
+export interface OtherConditionFlags {
+  pet: boolean
+  parking: boolean
+  corner: boolean
+  topFloor: boolean
+}
+
+/**
+ * other_conditions テキストからキーワードを検出してフラグ化する。
+ */
+export function extractOtherConditionFlags(other: string | null): OtherConditionFlags {
+  if (!other) return { pet: false, parking: false, corner: false, topFloor: false }
+  return {
+    pet:      /ペット可|ペット/.test(other),
+    parking:  /駐車場|駐車スペース|ガレージ/.test(other),
+    corner:   /角部屋|コーナー/.test(other),
+    topFloor: /最上階/.test(other),
+  }
+}
+
+// -------------------------------------------------------
 // SUUMO: 物件種別コード
 // -------------------------------------------------------
 function suumoTypeCode(propertyType: string | null, isSale: boolean): string | null {
@@ -76,11 +153,11 @@ function suumoTypeCode(propertyType: string | null, isSale: boolean): string | n
     if (pt.includes('戸建') || pt.includes('一戸建')) return '0401101'
     if (pt.includes('土地')) return '0500101'
     if (pt.includes('店舗') || pt.includes('事務所')) return '0600101'
-    return '0300101'  // デフォルト: 中古マンション
+    return '0300101'
   } else {
     if (pt.includes('戸建') || pt.includes('一戸建')) return '0401101'
     if (pt.includes('店舗') || pt.includes('事務所')) return '0700101'
-    return '0300101'  // デフォルト: マンション・アパート
+    return '0300101'
   }
 }
 
@@ -169,12 +246,6 @@ function toPortalAreaMapping(master: AreaMasterRow, param: PortalAreaParamRow): 
 /**
  * area 文字列の各部分を新マスター（area_masters / area_aliases / portal_area_params）から照合。
  * 解決できない場合は旧 portal_area_mappings にフォールバック。
- *
- * 優先度:
- *   ① area_aliases.alias 完全一致
- *   ② area_masters.display_name 完全一致
- *   ③ display_name / alias 部分一致
- *   ④ 旧 portal_area_mappings フォールバック
  */
 export function resolveAreaNamesV2(
   areaString: string | null,
@@ -183,14 +254,13 @@ export function resolveAreaNamesV2(
   portal: SiteKey,
   debugLog?: (msg: string) => void,
 ): AreaMatch[] {
-  const names = splitAreaNames(areaString)  // 重複排除済み
+  const names = splitAreaNames(areaString)
   if (names.length === 0) return []
 
   const { masters, params, aliases } = newMaster
   const portalParams = params.filter(p => p.portal === portal)
   const oldPortalMaps = oldMappings.filter(m => m.portal === portal)
 
-  /** master.id → PortalAreaMapping 変換（portal param がない場合 null） */
   const resolveById = (masterId: string): PortalAreaMapping | null => {
     const param = portalParams.find(p => p.area_id === masterId)
     if (!param) return null
@@ -307,12 +377,12 @@ export function resolveAreaNames(
  *     "ta=14&sc=14133"             → false
  */
 function isSuumoStationPath(param: string): boolean {
-  return /^[a-z]+\/eki_[a-z0-9]+$/.test(param)
+  // 旧形式 "kanagawa/eki_musashikosugi" と新形式 "kanagawa/ek_38720" の両方に対応
+  return /^[a-z]+\/eki?_[a-z0-9]+$/.test(param)
 }
 
 /**
  * 物件種別 × 売買/賃貸 → SUUMO駅パスURL用のパスセグメント
- * 例: マンション売買 → "ms/chuko", 戸建賃貸 → "chintai/ikkodate"
  */
 function suumoStationTypeSegment(propertyType: string | null, isSale: boolean): string {
   const pt = propertyType ?? ''
@@ -332,7 +402,7 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
   const isSale = cond.transaction_type !== 'rent'
   const resolved = resolveAreaNames(cond.area, mappings, 'suumo')
 
-  const resolvedAreas  = resolved.filter(r => r.mapping).map(r => r.inputName)
+  const resolvedAreas   = resolved.filter(r => r.mapping).map(r => r.inputName)
   const unresolvedAreas = resolved.filter(r => !r.mapping).map(r => r.inputName)
   const warnings: string[] = []
   const urls: { url: string; label: string }[] = []
@@ -341,12 +411,28 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
   const wk  = suumoWalk(cond.walk_minutes_max)
   const ag  = suumoAge(cond.building_age_max)
 
-  // ── 1. 駅パス形式エントリ（kanagawa/eki_musashikosugi 等）──────────
-  // 駅ごとに1URL生成。ekk= が正しく機能する。
+  // 間取り・その他条件
+  const floorLabels = extractFloorPlanLabels(cond.other_conditions)
+  const otherFlags  = extractOtherConditionFlags(cond.other_conditions)
+
+  // SUUMO md= クエリ文字列（複数指定: &md=09&md=10）
+  const mdParts = floorLabels
+    .map(l => SUUMO_MD[l])
+    .filter(Boolean)
+    .map(v => `md=${v}`)
+
+  // SUUMO その他条件
+  const extraParts: string[] = []
+  if (otherFlags.pet)      extraParts.push('pc=1')
+  if (otherFlags.parking)  extraParts.push('psk=1')
+  if (otherFlags.corner)   extraParts.push('kkr=1')
+  if (otherFlags.topFloor) extraParts.push('kk=1')
+
+  // ── 1. 駅パス形式エントリ ────────────────────────────────────────────
   const stationPathMatches = resolved.filter(r => r.mapping && isSuumoStationPath(r.mapping.portal_url_param))
 
   for (const r of stationPathMatches) {
-    const path = r.mapping!.portal_url_param  // e.g. "kanagawa/eki_musashikosugi"
+    const path = r.mapping!.portal_url_param
     const typeSegment = suumoStationTypeSegment(cond.property_type, isSale)
     const qParts: string[] = []
     if (isSale) {
@@ -360,6 +446,8 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
     if (cond.area_sqm_max) qParts.push(`mt=${Math.ceil(cond.area_sqm_max)}`)
     if (wk) qParts.push(`ekk=${wk}`)
     if (ag) qParts.push(`cn=${ag}`)
+    qParts.push(...mdParts)
+    qParts.push(...extraParts)
     const qs = qParts.length > 0 ? `?${qParts.join('&')}` : ''
     urls.push({
       url: `https://suumo.jp/${typeSegment}/${path}/${qs}`,
@@ -373,7 +461,7 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
 
   for (const r of resolved) {
     if (!r.mapping) continue
-    if (isSuumoStationPath(r.mapping.portal_url_param)) continue  // 上で処理済み
+    if (isSuumoStationPath(r.mapping.portal_url_param)) continue
 
     const params = new URLSearchParams(r.mapping.portal_url_param)
     const ta = params.get('ta')
@@ -385,7 +473,6 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
     if (!groups.has(ta)) groups.set(ta, { ta, ar, codes: [] })
     const g = groups.get(ta)!
     const code = sc ? `sc=${sc}` : ek ? `ek=${ek}` : null
-    // 重複除去（同一都道府県内で同じコードを複数回追加しない）
     if (code && !g.codes.includes(code)) g.codes.push(code)
   }
 
@@ -415,6 +502,8 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
     if (cond.area_sqm_max) qs += `&mt=${Math.ceil(cond.area_sqm_max)}`
     if (wk) qs += `&${isSale ? 'ekk' : 'et'}=${wk}`
     if (ag) qs += `&cn=${ag}`
+    for (const p of mdParts)    qs += `&${p}`
+    for (const p of extraParts) qs += `&${p}`
 
     const base_url = isSale
       ? 'https://suumo.jp/jj/bukken/ichiran/JJ010FJ001/'
@@ -431,7 +520,7 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
     })
   }
 
-  // ── 3. エリアが解決できなかった場合 ──────────────────────────────────
+  // ── 3. エリアが解決できなかった場合 ─────────────────────────────────
   if (urls.length === 0) {
     if (cond.area) {
       return { urls: [], unresolvedAreas, resolvedAreas, warnings: ['エリアが解決できませんでした'], canGenerate: false }
@@ -450,6 +539,8 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
     if (cond.area_sqm_min) qs += `&mb=${Math.floor(cond.area_sqm_min)}`
     if (wk) qs += `&${isSale ? 'ekk' : 'et'}=${wk}`
     if (ag) qs += `&cn=${ag}`
+    for (const p of mdParts)    qs += `&${p}`
+    for (const p of extraParts) qs += `&${p}`
     const base_url = isSale
       ? 'https://suumo.jp/jj/bukken/ichiran/JJ010FJ001/'
       : 'https://suumo.jp/jj/chintai/ichiran/FR301FC001/'
@@ -462,6 +553,7 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
 
 // -------------------------------------------------------
 // AtHome / HOME'S 共通 URL 生成（パスベース）
+// エリアごとに個別URLを生成する（複数エリア対応）
 // -------------------------------------------------------
 function buildPathPortalUrl(
   portal: 'athome' | 'homes',
@@ -474,21 +566,14 @@ function buildPathPortalUrl(
   const unresolvedAreas = resolved.filter(r => !r.mapping).map(r => r.inputName)
   const warnings: string[] = []
 
-  // パスベース: 先頭の解決済みエントリを使用（複数エリア非対応）
   const matched = resolved.filter(r => r.mapping)
 
   if (matched.length === 0 && cond.area) {
     return {
-      urls: [], unresolvedAreas, resolvedAreas, warnings: ['エリアが解決できませんでした'],
+      urls: [], unresolvedAreas, resolvedAreas,
+      warnings: ['エリアが解決できませんでした'],
       canGenerate: false,
     }
-  }
-
-  if (matched.length > 1) {
-    warnings.push(
-      `${portal === 'athome' ? 'アットホーム' : "HOME'S"} はパスベース検索のため、` +
-      `最初のエリア「${matched[0].inputName}」のみ反映されます`
-    )
   }
 
   // 物件種別 → パスセグメント
@@ -508,56 +593,109 @@ function buildPathPortalUrl(
   }
 
   const baseHost = portal === 'athome' ? 'https://www.athome.co.jp' : 'https://www.homes.co.jp'
+  const portalLabel = portal === 'athome' ? 'アットホーム' : "HOME'S"
 
-  // エリアパス（先頭1件のみ）
-  const areaPath = matched.length > 0 ? matched[0].mapping!.portal_url_param : ''
+  // 間取り・その他条件
+  const floorLabels = extractFloorPlanLabels(cond.other_conditions)
+  const otherFlags  = extractOtherConditionFlags(cond.other_conditions)
 
-  const base = `${baseHost}${typeSegment}${areaPath}/list/`
-
-  // フィルターパラメータ
-  const q: Record<string, string> = {}
-
-  if (portal === 'athome') {
-    // AtHome
-    if (isSale) {
-      if (cond.budget_min != null || cond.budget_max != null) {
-        q.PRICE = `${cond.budget_min ?? ''}-${cond.budget_max ?? ''}`
-      }
-    } else {
-      if (cond.rent_min != null || cond.rent_max != null) {
-        const lo = cond.rent_min ? String(cond.rent_min * 10000) : ''
-        const hi = cond.rent_max ? String(cond.rent_max * 10000) : ''
-        q.PRICE = `${lo}-${hi}`
-      }
-    }
-    if (cond.area_sqm_min) q.MENSEKI = `${Math.floor(cond.area_sqm_min)}-`
-    if (cond.walk_minutes_max) q.TIKO = String(cond.walk_minutes_max)
-    if (cond.building_age_max) q.CHIKU = String(cond.building_age_max)
-  } else {
-    // HOME'S
-    if (isSale) {
-      if (cond.budget_min) q.priceMin = String(cond.budget_min)
-      if (cond.budget_max) q.priceMax = String(cond.budget_max)
-    } else {
-      if (cond.rent_min) q.priceMin = String(cond.rent_min)
-      if (cond.rent_max) q.priceMax = String(cond.rent_max)
-    }
-    if (cond.area_sqm_min) q.areaMin = String(Math.floor(cond.area_sqm_min))
-    if (cond.walk_minutes_max) q.tsuukin = String(cond.walk_minutes_max)
-    if (cond.building_age_max) q.chiku = String(cond.building_age_max)
+  // ログ: ポータル側が対応していない条件
+  if (otherFlags.corner && portal === 'athome') {
+    warnings.push('アットホーム: 角部屋絞り込みはポータル側未対応のためURLには反映されません')
+  }
+  if (otherFlags.topFloor && portal === 'athome') {
+    warnings.push('アットホーム: 最上階絞り込みはポータル側未対応のためURLには反映されません')
   }
 
-  const qs = Object.keys(q).length > 0 ? `?${new URLSearchParams(q).toString()}` : ''
-  const label = matched.length > 0
-    ? `${portal === 'athome' ? 'アットホーム' : "HOME'S"} ${matched[0].inputName} ${isSale ? '売買' : '賃貸'}`
-    : `${portal === 'athome' ? 'アットホーム' : "HOME'S"} ${isSale ? '売買' : '賃貸'}（エリア未指定）`
+  // フィルターパラメータ（エリアを除く共通部分）
+  const buildQuery = (): Record<string, string> => {
+    const q: Record<string, string> = {}
+
+    if (portal === 'athome') {
+      // 価格
+      if (isSale) {
+        if (cond.budget_min != null || cond.budget_max != null) {
+          q.PRICE = `${cond.budget_min ?? ''}-${cond.budget_max ?? ''}`
+        }
+      } else {
+        if (cond.rent_min != null || cond.rent_max != null) {
+          const lo = cond.rent_min  ? String(cond.rent_min  * 10000) : ''
+          const hi = cond.rent_max  ? String(cond.rent_max  * 10000) : ''
+          q.PRICE = `${lo}-${hi}`
+        }
+      }
+      // 面積（上限あれば "70-90" 形式、下限のみなら "70-"）
+      if (cond.area_sqm_min != null || cond.area_sqm_max != null) {
+        const lo = cond.area_sqm_min ? String(Math.floor(cond.area_sqm_min)) : ''
+        const hi = cond.area_sqm_max ? String(Math.ceil(cond.area_sqm_max))  : ''
+        q.MENSEKI = `${lo}-${hi}`
+      }
+      if (cond.walk_minutes_max) q.TIKO  = String(cond.walk_minutes_max)
+      if (cond.building_age_max) q.CHIKU = String(cond.building_age_max)
+      // 間取り（複数: MADORI[]=01&MADORI[]=02 形式）
+      // athome は MADORI= を複数つけるか、カンマ区切りで指定
+      // ここではクエリを手動構築するためカンマ区切りを使用
+      const madoriCodes = floorLabels.map(l => ATHOME_MADORI[l]).filter(Boolean)
+      if (madoriCodes.length > 0) q.MADORI = madoriCodes.join(',')
+      // その他
+      if (otherFlags.pet)     q.PET     = '1'
+      if (otherFlags.parking) q.PARKING = '1'
+    } else {
+      // HOME'S: 検索フォームの実パラメータは cond[...] 形式
+      // （売買価格は万円、賃貸は cond[moneyroom] が円/月ではなく万円指定）
+      if (isSale) {
+        if (cond.budget_min) q['cond[moneyroom]']  = String(cond.budget_min)
+        if (cond.budget_max) q['cond[moneyroomh]'] = String(cond.budget_max)
+      } else {
+        if (cond.rent_min) q['cond[moneyroom]']  = String(cond.rent_min)
+        if (cond.rent_max) q['cond[moneyroomh]'] = String(cond.rent_max)
+      }
+      if (cond.area_sqm_min) q['cond[housearea]']  = String(Math.floor(cond.area_sqm_min))
+      if (cond.area_sqm_max) q['cond[houseareah]'] = String(Math.ceil(cond.area_sqm_max))
+      if (cond.walk_minutes_max) q['cond[walkminutesh]'] = String(cond.walk_minutes_max)
+      if (cond.building_age_max) q['cond[houseageh]']    = String(cond.building_age_max)
+      // 間取り（HOME'S は madori= を複数）
+      const madoriCodes = floorLabels.map(l => HOMES_MADORI[l]).filter(Boolean)
+      if (madoriCodes.length > 0) q.madori = madoriCodes.join(',')
+      // その他
+      if (otherFlags.pet)      q.pet     = '1'
+      if (otherFlags.parking)  q.parking = '1'
+      if (otherFlags.corner)   q.corner  = '1'
+      if (otherFlags.topFloor) q.top     = '1'
+    }
+
+    return q
+  }
+
+  const urls: { url: string; label: string }[] = []
+
+  if (matched.length === 0) {
+    // エリア未指定: エリアパスなしでURL生成
+    const q = buildQuery()
+    const qs = Object.keys(q).length > 0 ? `?${new URLSearchParams(q).toString()}` : ''
+    urls.push({
+      url: `${baseHost}${typeSegment}/list/${qs}`,
+      label: `${portalLabel} ${isSale ? '売買' : '賃貸'}（エリア指定なし）`,
+    })
+  } else {
+    // エリアごとに個別URL生成
+    for (const r of matched) {
+      const areaPath = r.mapping!.portal_url_param
+      const q = buildQuery()
+      const qs = Object.keys(q).length > 0 ? `?${new URLSearchParams(q).toString()}` : ''
+      urls.push({
+        url: `${baseHost}${typeSegment}${areaPath}/list/${qs}`,
+        label: `${portalLabel} ${r.inputName} ${isSale ? '売買' : '賃貸'}`,
+      })
+    }
+  }
 
   return {
-    urls: [{ url: `${base}${qs}`, label }],
+    urls,
     unresolvedAreas,
     resolvedAreas,
     warnings,
-    canGenerate: true,
+    canGenerate: urls.length > 0,
   }
 }
 
@@ -586,16 +724,13 @@ export function buildPortalUrlV2(
   oldMappings: PortalAreaMapping[],
   debugLog?: (msg: string) => void,
 ): BuildResult {
-  // 新マスターで解決した結果を旧 PortalAreaMapping 互換の配列に変換して既存URLビルダーへ渡す
   const resolved = resolveAreaNamesV2(cond.area, newMaster, oldMappings, portal, debugLog)
 
-  // resolved を PortalAreaMapping[] に展開し、既存 buildSuumoUrl / buildPathPortalUrl に食わせる
-  // → 新旧混在した仮想マッピング配列を作り、cond.area の各名前を display_name として格納する
+  // display_name を inputName で上書きした仮想マッピング配列を作成して既存ビルダーに渡す
   const syntheticMappings: PortalAreaMapping[] = resolved
     .filter(r => r.mapping != null)
     .map(r => ({
       ...r.mapping!,
-      // display_name を inputName に上書きすることで既存の完全一致ロジックが通る
       display_name: r.inputName,
     }))
 
@@ -609,13 +744,12 @@ export function buildPortalUrlV2(
     case 'homes':  result = buildPathPortalUrl('homes',  cond, syntheticMappings); break
   }
 
-  // 未解決エリアをマージ（重複排除）
   const allUnresolved = [...new Set([
     ...result.unresolvedAreas,
     ...resolved.filter(r => !r.mapping).map(r => r.inputName),
   ])]
 
-  debugLog?.(`[build] 生成URL: ${result.urls.map(u => u.url).join(' | ')}`)
+  debugLog?.(`[build] 生成URL数: ${result.urls.length} - ${result.urls.map(u => u.url).join(' | ')}`)
 
   return { ...result, unresolvedAreas: allUnresolved }
 }
@@ -647,6 +781,7 @@ export function makeUrlLog(
       area_sqm_max: cond.area_sqm_max,
       walk_minutes_max: cond.walk_minutes_max,
       building_age_max: cond.building_age_max,
+      other_conditions: cond.other_conditions,
     },
   }
 }
