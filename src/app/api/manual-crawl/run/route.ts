@@ -87,12 +87,17 @@ export async function POST(req: NextRequest) {
       if (p.dedup_key) dedupToId.set(p.dedup_key, p.id)
     }
 
+    // 顧客条件から transaction_type を取得してクローラーに渡す
+    // （クローラー側のURL自動検出よりも明示的な条件値を優先）
+    const condTxType = ((customer?.customer_conditions as Record<string, unknown>[])?.[0]
+      ?.transaction_type as string) === 'rent' ? 'rent' : 'sale'
+
     // クロール実行
     const crawlResult = await crawler(crawlUrl, customerId, {
       mode: 'manual',
       maxPages,
       stopOnDuplicateCount: 999,
-    }, knownDedupKeys)
+    }, knownDedupKeys, condTxType as 'sale' | 'rent')
 
     // 新規物件を保存
     const savedIds = new Map<string, string>()

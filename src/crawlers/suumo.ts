@@ -235,9 +235,12 @@ export async function crawlSuumo(
   knownDedupKeys: Set<string>,
   transactionType?: import('@/types').TransactionType,
 ): Promise<PageCrawlResult> {
-  // SUUMO URLからtransactionTypeを自動検出（FR301FC001=賃貸、それ以外=売買）
+  // SUUMO URLからtransactionTypeを自動検出
+  // - ta+sc賃貸: FR301FC001 を含む
+  // - 駅パス賃貸: /chintai/ を含む（例: suumo.jp/chintai/kanagawa/ek_XXXXX/）
+  // - 売買: どちらも含まない
   const resolvedType: import('@/types').TransactionType =
-    transactionType ?? (baseUrl.includes('FR301FC001') ? 'rent' : 'sale')
+    transactionType ?? (/FR301FC001|\/chintai\//.test(baseUrl) ? 'rent' : 'sale')
   const sortedUrl = addNewestFirstSort(baseUrl)
 
   const browser = await chromium.launch({ headless: true })
