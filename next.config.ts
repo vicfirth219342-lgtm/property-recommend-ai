@@ -8,7 +8,7 @@ const nextConfig: NextConfig = {
       { protocol: 'https', hostname: '**.homes.co.jp' },
     ],
   },
-  serverExternalPackages: ['playwright'],
+  serverExternalPackages: ['playwright', 'playwright-extra', 'puppeteer-extra-plugin-stealth'],
 }
 
 export default nextConfig

@@ -1,4 +1,7 @@
-import { chromium } from 'playwright'
+import { chromium as stealthChromium } from 'playwright-extra'
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const StealthPlugin = require('puppeteer-extra-plugin-stealth')
+stealthChromium.use(StealthPlugin())
 import { ScrapedProperty, CrawlOptions, PageCrawlResult, StoppedReason } from '@/types'
 import { buildDedupKey } from '@/lib/dedup'
 import { parseBuiltDate } from '@/lib/parseBuiltDate'
@@ -8,11 +11,12 @@ import fs from 'fs'
 const SNAPSHOT_DIR = path.join(process.cwd(), 'crawl-snapshots')
 const PAGE_SIZE = 30
 
-// 新着順ソートを付与（既に sort パラメータがある場合はスキップ）
-function addNewestFirstSort(baseUrl: string): string {
+// 新着順ソートを付与（賃貸のみ。売買は sort=new が無効で0件になるため付与しない）
+function addNewestFirstSort(baseUrl: string, transactionType: 'sale' | 'rent'): string {
+  if (transactionType !== 'rent') return baseUrl
   const url = new URL(baseUrl)
   if (!url.searchParams.has('sort') && !url.searchParams.has('sortby')) {
-    url.searchParams.set('sort', 'new') // AtHome: sort=new = 新着順
+    url.searchParams.set('sort', 'new')
   }
   return url.toString()
 }
@@ -143,9 +147,9 @@ export async function crawlAthome(
   knownDedupKeys: Set<string>,
   transactionType: import('@/types').TransactionType = 'sale'
 ): Promise<PageCrawlResult> {
-  const sortedUrl = addNewestFirstSort(baseUrl)
+  const sortedUrl = addNewestFirstSort(baseUrl, transactionType)
 
-  const browser = await chromium.launch({
+  const browser = await stealthChromium.launch({
     headless: true,
     args: [
       '--disable-blink-features=AutomationControlled',
@@ -203,16 +207,16 @@ export async function crawlAthome(
 
       // bot認証・404 を 0件取得と区別してエラーにする（データは捏造しない）
       const pageTitle = await page.title().catch(() => '')
-      if (pageTitle.includes('認証にご協力')) {
+      if (pageTitle.includes('認証にご協力') || pageTitle.includes('認証中')) {
         throw new Error('bot認証ページが表示されました（アットホーム）。時間をおいて再実行してください')
       }
       if (pageTitle.includes('見つかりません')) {
         throw new Error(`検索URLが無効です（404）: ${pageUrl}`)
       }
 
-      // Angular SPA のため一覧の描画を待つ（最大15秒。現れなければそのまま解析）
-      // .p-property は現行セレクター（旧 .card-box は廃止済み）
-      await page.waitForSelector('.p-property, [class*="bukken"] a, a[href*="/chintai/"]', { timeout: 15000 }).catch(() => {})
+      // Angular SPA のため物件カードの描画を待つ（最大20秒）
+      // フォールバックにナビリンク等を入れると売買ページで即解決してしまうため .p-property のみ指定
+      await page.waitForSelector('.p-property, .card-box', { timeout: 20000 }).catch(() => {})
 
       if (currentPage === 1) {
         const counts = await parseTotalCount(page)
