@@ -125,6 +125,18 @@ export async function generateAndSaveUrls(
 
       // 新しい URL を挿入
       if (result.urls.length > 0) {
+        // 手動登録の有効URLが存在する場合、auto URLは非アクティブで挿入（手動優先）
+        const { data: manualUrls } = await db
+          .from('customer_search_urls')
+          .select('id')
+          .eq('customer_id', customerId)
+          .eq('site', portal)
+          .eq('transaction_type', condition.transaction_type ?? 'sale')
+          .eq('generated_by', 'manual')
+          .eq('is_active', true)
+
+        const hasActiveManual = (manualUrls ?? []).length > 0
+
         const rows = result.urls.map(u => ({
           customer_id:     customerId,
           site:            portal,
@@ -134,8 +146,12 @@ export async function generateAndSaveUrls(
           generated_by:    'auto',
           condition_hash:  hash,
           generation_log:  log,
-          is_active:       true,
+          is_active:       !hasActiveManual,
         }))
+
+        if (hasActiveManual) {
+          console.log(`[urlGenerationService] ${portal}: 手動URLが存在するため auto URL を is_active=false で挿入`)
+        }
 
         const { error: insErr } = await db
           .from('customer_search_urls')

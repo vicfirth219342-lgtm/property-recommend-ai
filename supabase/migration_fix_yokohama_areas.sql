@@ -1,0 +1,71 @@
+-- migration_fix_yokohama_areas.sql
+-- 実施日: 2026-07-11
+-- 目的: 横浜エリア(関内・磯子・根岸)のSUUMO SCコード誤りを修正し、根岸・磯子駅をマスタ登録
+
+-- ============================================================
+-- 修正1: 関内 SUUMO portal_url_param
+--   eki_形式(廃止・404) → ta=14&sc=14104(横浜市中区)
+-- ============================================================
+-- UPDATE portal_area_params
+-- SET portal_url_param = 'ta=14&sc=14104',
+--     portal_code = '14104',
+--     param_type = 'query',
+--     verified = false,
+--     notes = '関内駅: eki_形式廃止のため市区町村検索(横浜市中区 sc=14104)へ切り替え [2026-07-11]',
+--     updated_at = NOW()
+-- WHERE id = '2d1bf7ff-ab1c-4e42-bc9d-e50d9c5ff811';
+-- 適用済み (2026-07-11 REST API経由)
+
+-- ============================================================
+-- 修正2: 横浜市磯子区 SUUMO SCコード
+--   sc=14109(港北区・誤り) → sc=14107(磯子区・正しい)
+-- ============================================================
+-- UPDATE portal_area_params
+-- SET portal_url_param = 'ta=14&sc=14107',
+--     portal_code = '14107',
+--     notes = '横浜市磯子区: sc=14109(港北区誤り)→sc=14107(磯子区)へ修正 [2026-07-11]',
+--     updated_at = NOW()
+-- WHERE id = 'cbf5b5b8-74d2-4109-90e9-238794fcc1f9';
+-- 適用済み (2026-07-11 REST API経由)
+
+-- ============================================================
+-- 修正3: 磯子・根岸 駅をマスタ登録
+-- area_masters IDs:
+--   磯子: 69a3bbc6-3fba-4696-80f2-b2f131a8b450
+--   根岸: e51bdf6a-e59a-4cfb-96a2-097bed4d056f
+-- 適用済み (2026-07-11 REST API経由)
+-- ============================================================
+
+-- ============================================================
+-- ロールバック手順
+-- ============================================================
+-- -- 修正1の逆: 関内 SUUMO を eki_形式に戻す（廃止・404になるため非推奨）
+-- UPDATE portal_area_params
+-- SET portal_url_param = 'kanagawa/eki_kannai',
+--     portal_code = '14102',
+--     param_type = 'station_path',
+--     notes = 'ロールバック: eki_形式(廃止404) [2026-07-11]',
+--     updated_at = NOW()
+-- WHERE id = '2d1bf7ff-ab1c-4e42-bc9d-e50d9c5ff811';
+
+-- -- 修正2の逆: 横浜市磯子区 SUUMO sc=14107 → sc=14109 に戻す（誤りのため非推奨）
+-- UPDATE portal_area_params
+-- SET portal_url_param = 'ta=14&sc=14109',
+--     portal_code = '14109',
+--     notes = 'ロールバック: sc=14109(港北区・誤り) [2026-07-11]',
+--     updated_at = NOW()
+-- WHERE id = 'cbf5b5b8-74d2-4109-90e9-238794fcc1f9';
+
+-- -- 修正3の逆: 磯子・根岸 を削除
+-- DELETE FROM area_aliases WHERE area_id IN (
+--   '69a3bbc6-3fba-4696-80f2-b2f131a8b450',
+--   'e51bdf6a-e59a-4cfb-96a2-097bed4d056f'
+-- );
+-- DELETE FROM portal_area_params WHERE area_id IN (
+--   '69a3bbc6-3fba-4696-80f2-b2f131a8b450',
+--   'e51bdf6a-e59a-4cfb-96a2-097bed4d056f'
+-- );
+-- DELETE FROM area_masters WHERE id IN (
+--   '69a3bbc6-3fba-4696-80f2-b2f131a8b450',
+--   'e51bdf6a-e59a-4cfb-96a2-097bed4d056f'
+-- );
