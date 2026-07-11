@@ -43,9 +43,10 @@ async function parseTotalCount(page: import('playwright').Page): Promise<{ total
 export async function scrapeOnePage(page: import('playwright').Page, transactionType: import('@/types').TransactionType = 'sale'): Promise<ScrapedProperty[]> {
   const properties: ScrapedProperty[] = []
 
-  // 賃貸ページ検出: .cassetteitem が存在すれば FR301FC001（賃貸一覧）ページ
-  const rentCards = await page.$$('.cassetteitem')
-  if (rentCards.length > 0) {
+  if (transactionType === 'rent') {
+    // 賃貸: .cassetteitem（建物カード）内の各 tbody = 1部屋
+    // 売買ページにも .cassetteitem が存在する場合があるためパラメータで制御し DOM 検出に頼らない
+    const rentCards = await page.$$('.cassetteitem')
     for (const card of rentCards) {
       try {
         const buildingName = await card.$eval(
@@ -232,8 +233,11 @@ export async function crawlSuumo(
   customerId: string,
   options: CrawlOptions,
   knownDedupKeys: Set<string>,
-  transactionType: import('@/types').TransactionType = 'sale'
+  transactionType?: import('@/types').TransactionType,
 ): Promise<PageCrawlResult> {
+  // SUUMO URLからtransactionTypeを自動検出（FR301FC001=賃貸、それ以外=売買）
+  const resolvedType: import('@/types').TransactionType =
+    transactionType ?? (baseUrl.includes('FR301FC001') ? 'rent' : 'sale')
   const sortedUrl = addNewestFirstSort(baseUrl)
 
   const browser = await chromium.launch({ headless: true })
@@ -296,7 +300,7 @@ export async function crawlSuumo(
         fs.writeFileSync(htmlPath, await page.content(), 'utf-8')
       }
 
-      const pageProps = await scrapeOnePage(page, transactionType)
+      const pageProps = await scrapeOnePage(page, resolvedType)
       checkedPages++
 
       if (pageProps.length === 0) {
