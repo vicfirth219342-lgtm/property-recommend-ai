@@ -204,10 +204,12 @@ export default function CandidatesPage() {
   async function syncToReinsCheck() {
     if (!data) return
     setSyncingReins(true); setSyncResult(null)
+    // 条件一致・手動確認の物件IDを直接渡す（address フィルターでは駅名エリアが0件になるため）
+    const matchIds = [...data.matches, ...data.needManual].map(p => p.id).filter(Boolean)
     const res = await fetch('/api/reins-check/sync-portal', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customer_id: customerId }),
+      body: JSON.stringify({ customer_id: customerId, property_ids: matchIds }),
     })
     const json = await res.json()
     if (res.ok) setSyncResult({ registered: json.registered, skipped: json.skipped })
