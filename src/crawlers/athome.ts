@@ -45,10 +45,11 @@ async function parseTotalCount(page: import('playwright').Page): Promise<{ total
 
 export async function scrapeOnePage(page: import('playwright').Page, transactionType: import('@/types').TransactionType = 'sale'): Promise<ScrapedProperty[]> {
   const properties: ScrapedProperty[] = []
-  // .card-box.open が実際の物件カード。.bukken-item はカード内の画像スワイパー要素であり
-  // 物件情報を持たないため、カードのルート候補にしてはならない（誤って0件になるバグの原因だった）
+
+  // athome は Angular SPA。現行の物件カードは .p-property（旧 .card-box は廃止済み）
   const selectors = [
-    '.card-box.open',
+    '.p-property',            // 現行: 建物単位カード（2024年〜）
+    '.card-box.open',         // 旧形式フォールバック
     '.card-box',
     '[class*="propertyList"] li',
     '.bukken-item',
@@ -61,7 +62,8 @@ export async function scrapeOnePage(page: import('playwright').Page, transaction
   for (const sel of selectors) {
     const candidates = await page.$$(sel)
     if (candidates.length === 0) continue
-    // 採用前に検証: 先頭要素から物件名・価格・詳細URLが取得できるセレクタのみ採用する
+    // 採用前に検証: 先頭要素から物件名・詳細URLが取得できるセレクタのみ採用する
+    // ※ athome の賃料は "12.6 万円"（スペースあり小数点あり）のため価格検証は緩める
     const sample = candidates[0]
     const sampleName = await sample.$eval(
       '[class*="title"], [class*="name"], h2, h3',
@@ -69,7 +71,8 @@ export async function scrapeOnePage(page: import('playwright').Page, transaction
     ).catch(() => '')
     const sampleUrl = await sample.$eval('a', (el) => (el as HTMLAnchorElement).href).catch(() => '')
     const sampleText = await sample.evaluate((el) => el.textContent ?? '')
-    const samplePriceOk = /[\d,]+万円/.test(sampleText)
+    // 賃料フォーマット: "12.6 万円"（スペース・小数点あり）に対応した判定
+    const samplePriceOk = /[\d,.]+\s*万円/.test(sampleText)
     if (sampleName && sampleUrl && samplePriceOk) {
       items = candidates
       break
@@ -82,8 +85,7 @@ export async function scrapeOnePage(page: import('playwright').Page, transaction
         '[class*="title"], [class*="name"], h2, h3',
         (el) => el.textContent?.trim() ?? ''
       ).catch(() => '')
-      // 一部レイアウトでは物件名要素に価格が同居する（例: "○○マンション 3F ワンルーム\n850万円"）
-      const name = nameRaw.replace(/\s*[\d,]+万円\s*$/, '').replace(/\s+/g, ' ').trim()
+      const name = nameRaw.replace(/\s*[\d,.]+\s*万円\s*$/, '').replace(/\s+/g, ' ').trim()
 
       const url = await item.$eval('a', (el) => (el as HTMLAnchorElement).href).catch(() => '')
       const allText = await item.evaluate(el => el.textContent ?? '')
@@ -92,9 +94,10 @@ export async function scrapeOnePage(page: import('playwright').Page, transaction
         (el) => el.textContent?.trim() ?? ''
       ).catch(() => '')
 
-      const priceMatch = allText.match(/([\d,]+)万円/)
-      const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) * 10000 : null
-      const areaMatch = allText.match(/([\d.]+)\s*(?:㎡|m²|m2)/)  // ㎡/m²/m2（m<sup>2</sup>のtextContent）の表記ゆれ対応
+      // athome 賃料: "12.6 万円"（スペースあり・小数点あり）→ \s* で対応
+      const priceMatch = allText.match(/([\d,.]+)\s*万円/)
+      const price = priceMatch ? Math.round(parseFloat(priceMatch[1].replace(/,/g, '')) * 10000) : null
+      const areaMatch = allText.match(/([\d.]+)\s*(?:㎡|m²|m2)/)
       const area_sqm = areaMatch ? parseFloat(areaMatch[1]) : null
       const floorMatch = allText.match(/([1-9][SLDK]+)/i)
       const floor_plan = floorMatch ? floorMatch[1].toUpperCase() : null
@@ -185,8 +188,9 @@ export async function crawlAthome(
         throw new Error(`検索URLが無効です（404）: ${pageUrl}`)
       }
 
-      // Angular SPA のため一覧の描画を待つ（最大10秒。現れなければそのまま解析）
-      await page.waitForSelector('a[href*="/mansion/"][href*="?"], [class*="bukken"] a, [class*="object"] a', { timeout: 10000 }).catch(() => {})
+      // Angular SPA のため一覧の描画を待つ（最大15秒。現れなければそのまま解析）
+      // .p-property は現行セレクター（旧 .card-box は廃止済み）
+      await page.waitForSelector('.p-property, [class*="bukken"] a, a[href*="/chintai/"]', { timeout: 15000 }).catch(() => {})
 
       if (currentPage === 1) {
         const counts = await parseTotalCount(page)
