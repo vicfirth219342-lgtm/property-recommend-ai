@@ -1,10 +1,5 @@
-import { chromium as stealthChromium } from 'playwright-extra'
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const StealthPlugin = require('puppeteer-extra-plugin-stealth')
+import { chromium } from 'playwright'
 import { ScrapedProperty, CrawlOptions, PageCrawlResult, StoppedReason } from '@/types'
-
-// アットホームはbot検出が厳しいため stealth プラグインを使用
-stealthChromium.use(StealthPlugin())
 import { buildDedupKey } from '@/lib/dedup'
 import { parseBuiltDate } from '@/lib/parseBuiltDate'
 import path from 'path'
@@ -150,8 +145,14 @@ export async function crawlAthome(
 ): Promise<PageCrawlResult> {
   const sortedUrl = addNewestFirstSort(baseUrl)
 
-  // stealthChromium: playwright-extra-plugin-stealth でWebDriver検出を回避
-  const browser = await stealthChromium.launch({ headless: true })
+  const browser = await chromium.launch({
+    headless: true,
+    args: [
+      '--disable-blink-features=AutomationControlled',
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+    ],
+  })
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     locale: 'ja-JP',
@@ -166,6 +167,10 @@ export async function crawlAthome(
       'Sec-Fetch-User': '?1',
       'Upgrade-Insecure-Requests': '1',
     },
+  })
+  // navigator.webdriver を undefined にしてbot検出を回避
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
   })
   const page = await context.newPage()
 
