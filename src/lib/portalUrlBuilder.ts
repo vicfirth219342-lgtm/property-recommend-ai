@@ -502,7 +502,8 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
   for (const g of groups.values()) {
     const base: Record<string, string> = {
       ar: g.ar,
-      bs: isSale ? '010' : '040',
+      // bs=011: 売買エリア検索の正しいコード（bs=010は無効・エラー画面になる）
+      bs: isSale ? '011' : '040',
       ta: g.ta,
     }
     if (tc) base.tc = tc
@@ -519,7 +520,8 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
     }
     if (cond.area_sqm_min) qs += `&mb=${Math.floor(cond.area_sqm_min)}`
     if (cond.area_sqm_max) qs += `&mt=${Math.ceil(cond.area_sqm_max)}`
-    if (wk) qs += `&${isSale ? 'ekk' : 'et'}=${wk}`
+    // ta+sc エリア検索では et（徒歩分数）を使う。ekk は駅ベース検索専用
+    if (wk) qs += `&et=${wk}`
     if (ag) qs += `&cn=${ag}`
     for (const p of mdParts)    qs += `&${p}`
     for (const p of extraParts) qs += `&${p}`
@@ -545,7 +547,7 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
       return { urls: [], unresolvedAreas, resolvedAreas, warnings: ['エリアが解決できませんでした'], canGenerate: false }
     }
     // エリア未指定 → デフォルトフォールバック（関東）
-    const base: Record<string, string> = { ar: '030', bs: isSale ? '010' : '040' }
+    const base: Record<string, string> = { ar: '030', bs: isSale ? '011' : '040' }
     if (tc) base.tc = tc
     let qs = new URLSearchParams(base).toString()
     if (isSale) {
@@ -556,7 +558,7 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
       if (cond.rent_max) qs += `&ct=${cond.rent_max}`
     }
     if (cond.area_sqm_min) qs += `&mb=${Math.floor(cond.area_sqm_min)}`
-    if (wk) qs += `&${isSale ? 'ekk' : 'et'}=${wk}`
+    if (wk) qs += `&et=${wk}`
     if (ag) qs += `&cn=${ag}`
     for (const p of mdParts)    qs += `&${p}`
     for (const p of extraParts) qs += `&${p}`
