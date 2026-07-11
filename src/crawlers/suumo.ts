@@ -45,6 +45,7 @@ export async function scrapeOnePage(page: import('playwright').Page, transaction
 
   const selectors = [
     '.property_unit',
+    '.cassetteitem',   // 賃貸検索結果ページ（FR301FC001）のカード
     '.cassette_unit',
     '[data-cassette-type]',
     '.l-cassette__item',
@@ -59,24 +60,31 @@ export async function scrapeOnePage(page: import('playwright').Page, transaction
   for (const item of items) {
     try {
       const name = await item.$eval(
-        '.property_unit-title, .cassette_unit-title, h2, h3',
+        '.property_unit-title, .cassette_unit-title, [class*="title"], h2, h3',
         (el) => el.textContent?.trim() ?? ''
       ).catch(() => '')
 
-      const url = await item.$eval('a', (el) => (el as HTMLAnchorElement).href).catch(() => '')
+      // 賃貸ページは最初のaがjavascript:void(0)のため、有効なhrefを持つaを優先取得
+      const url = await item.$$eval('a', (els) => {
+        const valid = (els as HTMLAnchorElement[]).find(a => a.href && !a.href.startsWith('javascript'))
+        return valid?.href ?? ''
+      }).catch(() => '')
+
       const address = await item.$$eval('dd, [class*="address"], [class*="location"]', (els) =>
         els.find(el => el.textContent?.includes('区') || el.textContent?.includes('市'))?.textContent?.trim() ?? ''
       ).catch(() => '')
 
       const allText = await item.evaluate(el => el.textContent ?? '')
 
-      const priceMatch = allText.match(/([\d,]+)万円/)
-      const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) * 10000 : null
+      // 賃料は小数点あり（例: 25.5万円）→ [\d,.]+ で対応
+      const priceMatch = allText.match(/([\d,.]+)万円/)
+      const price = priceMatch ? Math.round(parseFloat(priceMatch[1].replace(/,/g, '')) * 10000) : null
       const areaMatch = allText.match(/([\d.]+)\s*(?:㎡|m²|m2)/)  // ㎡/m²/m2（m<sup>2</sup>のtextContent）の表記ゆれ対応
       const area_sqm = areaMatch ? parseFloat(areaMatch[1]) : null
       const floorMatch = allText.match(/([1-9][SLDK]+)/i)
       const floor_plan = floorMatch ? floorMatch[1].toUpperCase() : null
-      const walkMatch = allText.match(/徒歩(\d+)分/)
+      // 徒歩表記: 「徒歩X分」（売買）・「歩X分」（賃貸）両対応
+      const walkMatch = allText.match(/(?:徒歩|歩)(\d+)分/)
       const walk_minutes = walkMatch ? parseInt(walkMatch[1]) : null
       const thumbnail = await item.$eval('img', (el) => (el as HTMLImageElement).src).catch(() => null)
       const roomMatch = name.match(/(\d+)号室?$/) ?? allText.match(/(\d{3,4})号室/)
@@ -178,10 +186,15 @@ export async function crawlSuumo(
       await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 })
       await page.waitForTimeout(1500 + Math.random() * 1000)
 
-      // 404・無効URLを 0件取得と区別してエラーにする（データは捏造しない）
+      // 404・エラーページを 0件取得と区別してエラーにする（データは捏造しない）
       const pageTitle = await page.title().catch(() => '')
       if (pageTitle.includes('ページが見つかりません')) {
         throw new Error(`検索URLが無効です（SUUMO 404）: ${pageUrl}`)
+      }
+      // 「必要な情報が不足しているため」エラーページ（URLパラメータ誤り等）
+      if (pageTitle.includes('エラー')) {
+        const bodyText = await page.textContent('body').catch(() => '')
+        throw new Error(`SUUMOエラーページ（URLパラメータ不正）: ${bodyText?.includes('必要な情報が不足') ? '必要な情報が不足しているため検索できません' : pageTitle} - ${pageUrl}`)
       }
 
       if (currentPage === 1) {
