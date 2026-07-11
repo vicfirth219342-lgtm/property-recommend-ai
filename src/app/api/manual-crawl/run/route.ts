@@ -208,14 +208,34 @@ function yenToMan(price: number | null | undefined): number | null {
 function calcMatchScore(prop: ScrapedProperty, cond: Record<string, unknown> | null): number {
   if (!cond) return 1
   let matched = 0, total = 0
+  const txType = (cond.transaction_type as string) ?? 'sale'
 
-  if (cond.budget_min || cond.budget_max) {
-    total++
-    const price = prop.price
-    const min = cond.budget_min ? (cond.budget_min as number) * 10000 : null
-    const max = cond.budget_max ? (cond.budget_max as number) * 10000 : null
-    if (price !== null && (!min || price >= min) && (!max || price <= max)) matched++
+  // 価格・賃料（必須条件: 超過なら即0を返す）
+  if (txType === 'rent') {
+    // 賃貸: monthly_rent（円）と rent_min/max（万円）を比較
+    if (cond.rent_min || cond.rent_max) {
+      total++
+      const rentYen = prop.monthly_rent
+      const min = cond.rent_min ? (cond.rent_min as number) * 10000 : null
+      const max = cond.rent_max ? (cond.rent_max as number) * 10000 : null
+      // 超過は必須不一致 → スコア0で即返却
+      if (rentYen !== null && max !== null && rentYen > max) return 0
+      if (rentYen !== null && min !== null && rentYen < min) return 0
+      if (rentYen !== null) matched++
+    }
+  } else {
+    // 売買: price（円）と budget_min/max（万円）を比較
+    if (cond.budget_min || cond.budget_max) {
+      total++
+      const price = prop.price
+      const min = cond.budget_min ? (cond.budget_min as number) * 10000 : null
+      const max = cond.budget_max ? (cond.budget_max as number) * 10000 : null
+      if (price !== null && max !== null && price > max) return 0
+      if (price !== null && min !== null && price < min) return 0
+      if (price !== null) matched++
+    }
   }
+
   if (cond.area_sqm_min || cond.area_sqm_max) {
     total++
     const sqm = prop.area_sqm
