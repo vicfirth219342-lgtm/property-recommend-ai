@@ -106,6 +106,26 @@ function ScoreBar({ score }: { score: number }) {
   )
 }
 
+// レインズ照合ステータスの表示設定
+const REINS_STATUS_CONFIG: Record<string, { label: string; color: string }> = {
+  unchecked:   { label: '未照合',         color: 'bg-slate-100 text-slate-500' },
+  queued:      { label: '照合待ち',       color: 'bg-blue-100 text-blue-700' },
+  in_progress: { label: '照合中',         color: 'bg-amber-100 text-amber-700' },
+  found:       { label: '掲載あり',       color: 'bg-green-100 text-green-700' },
+  candidates:  { label: '候補あり・要確認', color: 'bg-yellow-100 text-yellow-700' },
+  not_found:   { label: '掲載なし',       color: 'bg-red-50 text-red-600' },
+  error:       { label: 'エラー',         color: 'bg-red-100 text-red-700' },
+}
+
+function ReinsStatusBadge({ status }: { status: string }) {
+  const cfg = REINS_STATUS_CONFIG[status] ?? REINS_STATUS_CONFIG.unchecked
+  return (
+    <span className={`inline-flex items-center text-xs px-2 py-0.5 rounded-full font-medium ${cfg.color}`}>
+      {cfg.label}
+    </span>
+  )
+}
+
 function PropertyCard({
   prop, customerId, onProposed,
 }: {
@@ -113,38 +133,110 @@ function PropertyCard({
   customerId: string
   onProposed: (id: string) => void
 }) {
-  const [proposing, setProposing] = useState(false)
-  const [done, setDone] = useState(prop.isAlreadyProposed ?? false)
+  const [addingCandidate, setAddingCandidate] = useState(false)
+  const [candidateState, setCandidateState] = useState<{
+    done: boolean; addedAt: string | null
+  }>({ done: prop.isAlreadyProposed ?? false, addedAt: null })
 
-  async function propose() {
+  const [reinsStatus, setReinsStatus] = useState<string>('unchecked')
+  const [reinsQueuing, setReinsQueuing] = useState(false)
+
+  // 初期ロード: この物件がすでに候補・キューに入っているか確認
+  useEffect(() => {
+    if (!prop.propertyId || !customerId) return
+    // 候補追加済みチェック
+    fetch(`/api/proposal-candidates?customer_id=${customerId}`)
+      .then(r => r.json())
+      .then((list: Array<{ property_id: string; added_at: string; displayReinsStatus?: string }>) => {
+        const found = list.find(c => c.property_id === prop.propertyId)
+        if (found) {
+          setCandidateState({ done: true, addedAt: found.added_at })
+          if (found.displayReinsStatus) setReinsStatus(found.displayReinsStatus)
+        }
+      })
+      .catch(() => {})
+
+    // レインズキューのステータス確認
+    fetch(`/api/reins-queue?customer_id=${customerId}`)
+      .then(r => r.json())
+      .then((data: { items?: Array<{ property?: { id: string }; status: string }> }) => {
+        const item = (data.items ?? []).find(i => i.property?.id === prop.propertyId)
+        if (item) setReinsStatus(mapQueueStatus(item.status))
+      })
+      .catch(() => {})
+  }, [prop.propertyId, customerId])
+
+  function mapQueueStatus(status: string): string {
+    if (status === 'queued') return 'queued'
+    if (status === 'in_progress') return 'in_progress'
+    if (status === 'matched') return 'found'
+    if (status === 'needs_review') return 'candidates'
+    if (status === 'not_found') return 'not_found'
+    return 'unchecked'
+  }
+
+  async function queueReinsCheck() {
     if (!prop.propertyId) return
-    setProposing(true)
-    const res = await fetch('/api/proposals', {
+    setReinsQueuing(true)
+    const res = await fetch('/api/reins-queue', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customer_id: customerId, property_ids: [prop.propertyId] }),
+      body: JSON.stringify({ property_id: prop.propertyId, customer_id: customerId }),
     })
-    if (res.ok) { setDone(true); onProposed(prop.propertyId) }
-    setProposing(false)
+    const json = await res.json()
+    if (res.ok) {
+      setReinsStatus(json.alreadyQueued ? mapQueueStatus(json.queue.status) : 'queued')
+    } else {
+      setReinsStatus('error')
+    }
+    setReinsQueuing(false)
+  }
+
+  async function addToCandidate() {
+    if (!prop.propertyId) return
+    setAddingCandidate(true)
+    const res = await fetch('/api/proposal-candidates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customer_id: customerId,
+        property_id: prop.propertyId,
+        source: 'manual_crawl',
+        reins_status: reinsStatus,
+      }),
+    })
+    const json = await res.json()
+    if (res.ok) {
+      const addedAt = json.candidate?.added_at ?? json.added_at ?? new Date().toISOString()
+      setCandidateState({ done: true, addedAt })
+      onProposed(prop.propertyId)
+    }
+    setAddingCandidate(false)
   }
 
   const isRentProp = prop.transaction_type === 'rent'
-  // 賃貸: monthly_rent（円）を万円表示、売買: price（円）を万円表示
   const displayPrice = isRentProp ? prop.monthly_rent : prop.price
   const fmt = (p: number | null) => p ? `${(p / 10000).toLocaleString()}万円` : '価格未定'
+  const fmtDate = (iso: string) => {
+    const d = new Date(iso)
+    return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`
+  }
 
   return (
     <div className={`border rounded-xl p-4 transition-colors ${
-      done ? 'bg-green-50 border-green-200' :
+      candidateState.done ? 'bg-green-50 border-green-200' :
       prop.matchScore >= 0.8 ? 'bg-white border-slate-200' : 'bg-white border-slate-100 opacity-80'
     }`}>
+      {/* ヘッダー行 */}
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             {prop.isNew && <span className="text-xs bg-blue-500 text-white px-1.5 py-0.5 rounded font-medium">新規</span>}
-            {done       && <span className="text-xs bg-green-600 text-white px-1.5 py-0.5 rounded font-medium">提案済</span>}
+            {candidateState.done && <span className="text-xs bg-green-600 text-white px-1.5 py-0.5 rounded font-medium">候補追加済</span>}
             <span className="text-xs text-slate-400 uppercase">{prop.site}</span>
+            <ReinsStatusBadge status={reinsStatus} />
           </div>
+          {/* 物件名 = 詳細ページURL へのリンク */}
           <a href={prop.url} target="_blank" rel="noopener noreferrer"
              className="font-semibold text-sm text-blue-800 hover:underline leading-tight block truncate">
             {prop.name}
@@ -156,24 +248,47 @@ function PropertyCard({
           {prop.floor_plan && <div className="text-xs text-slate-500">{prop.floor_plan}</div>}
         </div>
       </div>
+
+      {/* スペック */}
       <div className="flex gap-2 text-xs text-slate-500 mb-2 flex-wrap">
         {prop.area_sqm     && <span className="bg-slate-50 px-1.5 py-0.5 rounded">{prop.area_sqm}㎡</span>}
         {prop.walk_minutes && <span className="bg-slate-50 px-1.5 py-0.5 rounded">徒歩{prop.walk_minutes}分</span>}
         {prop.building_age !== null && <span className="bg-slate-50 px-1.5 py-0.5 rounded">築{prop.building_age}年</span>}
       </div>
+
       <ScoreBar score={prop.matchScore} />
       {prop.matchItems && prop.matchItems.length > 0 && (
         <div className="flex flex-wrap gap-1 mt-2">
           {prop.matchItems.map((item, i) => <MatchBadge key={i} item={item} />)}
         </div>
       )}
-      <div className="flex justify-end mt-2">
-        {done ? (
-          <span className="text-xs text-green-700 font-medium">✓ 提案候補に追加済</span>
+
+      {/* アクションボタン行 */}
+      <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-100">
+        {/* レインズ照合ボタン */}
+        <button
+          onClick={queueReinsCheck}
+          disabled={reinsQueuing || reinsStatus === 'queued' || reinsStatus === 'in_progress' || !prop.propertyId}
+          className="text-xs border border-slate-300 text-slate-600 px-3 py-1.5 rounded-lg hover:bg-slate-50 disabled:opacity-40 transition-colors font-medium"
+        >
+          {reinsQueuing ? '照合キュー投入中...' :
+           reinsStatus === 'queued' ? '照合待ち中...' :
+           reinsStatus === 'in_progress' ? '照合中...' :
+           'レインズ照合'}
+        </button>
+
+        {/* 提案候補追加ボタン */}
+        {candidateState.done ? (
+          <span className="text-xs text-green-700 font-medium">
+            ✓ {candidateState.addedAt ? `${fmtDate(candidateState.addedAt)}に追加済` : '追加済'}
+          </span>
         ) : (
-          <button onClick={propose} disabled={proposing || !prop.propertyId}
-            className="text-xs bg-slate-800 text-white px-3 py-1.5 rounded-lg hover:bg-slate-700 disabled:opacity-40 transition-colors font-medium">
-            {proposing ? '追加中...' : '提案候補に追加'}
+          <button
+            onClick={addToCandidate}
+            disabled={addingCandidate || !prop.propertyId}
+            className="text-xs bg-slate-800 text-white px-3 py-1.5 rounded-lg hover:bg-slate-700 disabled:opacity-40 transition-colors font-medium"
+          >
+            {addingCandidate ? '追加中...' : '提案候補に追加'}
           </button>
         )}
       </div>

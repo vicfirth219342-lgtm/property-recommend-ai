@@ -118,3 +118,44 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({ counts, items })
 }
+
+// POST /api/reins-queue
+// 物件をレインズ照合キューに追加する
+export async function POST(req: NextRequest) {
+  const supabase = createServiceClient()
+  const body = await req.json()
+  const { property_id, customer_id, requested_by = 'manual_crawl' } = body
+
+  if (!property_id) {
+    return NextResponse.json({ error: 'property_id は必須です' }, { status: 400 })
+  }
+
+  // 既にキューにある場合は既存レコードを返す
+  const existingQuery = supabase
+    .from('reins_check_queue')
+    .select('id, status, updated_at')
+    .eq('property_id', property_id)
+  if (customer_id) existingQuery.eq('customer_id', customer_id)
+
+  const { data: existing } = await existingQuery.order('updated_at', { ascending: false }).limit(1).single()
+
+  if (existing) {
+    return NextResponse.json({ alreadyQueued: true, queue: existing })
+  }
+
+  const insertData: Record<string, unknown> = {
+    property_id,
+    status: 'queued',
+    requested_by,
+  }
+  if (customer_id) insertData.customer_id = customer_id
+
+  const { data, error } = await supabase
+    .from('reins_check_queue')
+    .insert(insertData)
+    .select()
+    .single()
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true, queue: data })
+}
