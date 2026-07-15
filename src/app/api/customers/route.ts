@@ -47,13 +47,13 @@ export async function POST(req: NextRequest) {
       // フロントから渡された番号を使うが、重複チェックしない（INSERT 結果で判断）
       return hint.trim()
     }
-    // 自動採番: 現在の最大番号を取得して +1
+    // 自動採番: 削除済み含む全顧客から最大番号を取得して +1
+    // （unique制約は削除済みレコードにも適用されるため除外してはいけない）
     const { data } = await supabase
       .from('customers')
       .select('customer_no')
-      .is('deleted_at', null)
       .order('created_at', { ascending: false })
-      .limit(200)
+      .limit(500)
     let maxNum = 0
     for (const row of data ?? []) {
       const m = row.customer_no?.match(/^C?(\d+)$/)
