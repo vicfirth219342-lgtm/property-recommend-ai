@@ -397,10 +397,10 @@ function DetailPanel({ item, onReload }: { item: QueueItem; onReload: () => void
             <tbody>
               {COMPARE_FIELDS.map(f => (
                 <tr key={f.key} className="border-b border-slate-100">
-                  <td className="py-1.5 px-2 text-slate-500">{f.label}</td>
-                  <td className="py-1.5 px-2 bg-blue-50/50">{f.portalVal(p)}</td>
+                  <td className="py-1.5 px-2 text-slate-600 font-medium">{f.label}</td>
+                  <td className="py-1.5 px-2 bg-blue-50 text-slate-800">{f.portalVal(p)}</td>
                   {cands.map(c => (
-                    <td key={c.id} className={`py-1.5 px-2 ${c.rank === 1 ? 'bg-green-50/50' : ''}`}>
+                    <td key={c.id} className={`py-1.5 px-2 text-slate-800 ${c.rank === 1 ? 'bg-green-50' : 'bg-slate-50'}`}>
                       {f.reinsVal(c.reins)}
                     </td>
                   ))}
