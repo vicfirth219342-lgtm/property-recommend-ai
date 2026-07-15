@@ -119,6 +119,26 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ counts, items })
 }
 
+// DELETE /api/reins-queue
+// { ids: string[] } — 指定IDのキューエントリを削除（関連する candidates / results も CASCADE）
+export async function DELETE(req: NextRequest) {
+  const supabase = createServiceClient()
+  const body = await req.json()
+  const { ids } = body as { ids?: string[] }
+
+  if (!ids || ids.length === 0) {
+    return NextResponse.json({ error: 'ids は必須です' }, { status: 400 })
+  }
+
+  const { error } = await supabase
+    .from('reins_check_queue')
+    .delete()
+    .in('id', ids)
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true, deleted: ids.length })
+}
+
 // POST /api/reins-queue
 // 物件をレインズ照合キューに追加する
 export async function POST(req: NextRequest) {

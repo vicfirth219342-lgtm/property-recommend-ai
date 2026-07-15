@@ -97,6 +97,8 @@ export default function ReinsQueuePage() {
   const [loading, setLoading] = useState(true)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [deleting, setDeleting] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -107,7 +109,37 @@ export default function ReinsQueuePage() {
       .finally(() => setLoading(false))
   }, [tab])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load(); setSelectedIds(new Set()) }, [load])
+
+  async function deleteSelected(ids: string[]) {
+    if (ids.length === 0) return
+    if (!confirm(`${ids.length}件を削除しますか？`)) return
+    setDeleting(true)
+    await fetch('/api/reins-queue', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    })
+    setDeleting(false)
+    setSelectedIds(new Set())
+    load()
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === items.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(items.map(i => i.id)))
+    }
+  }
 
   async function runAutoMatch() {
     setRunning(true)
@@ -124,15 +156,26 @@ export default function ReinsQueuePage() {
     <div className="min-h-screen bg-slate-50">
       <div className="max-w-7xl mx-auto px-6 py-6">
         {/* ヘッダー */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
           <h1 className="text-xl font-bold text-slate-800">レインズ照合キュー</h1>
-          <button
-            onClick={runAutoMatch}
-            disabled={running}
-            className="text-sm bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-700 disabled:opacity-50 transition-colors"
-          >
-            {running ? '照合中...' : '自動照合を実行'}
-          </button>
+          <div className="flex items-center gap-2">
+            {selectedIds.size > 0 && (
+              <button
+                onClick={() => deleteSelected([...selectedIds])}
+                disabled={deleting}
+                className="text-sm border border-red-300 text-red-600 px-4 py-2 rounded-lg hover:bg-red-50 disabled:opacity-50 transition-colors"
+              >
+                {deleting ? '削除中...' : `選択した${selectedIds.size}件を削除`}
+              </button>
+            )}
+            <button
+              onClick={runAutoMatch}
+              disabled={running}
+              className="text-sm bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-700 disabled:opacity-50 transition-colors"
+            >
+              {running ? '照合中...' : '自動照合を実行'}
+            </button>
+          </div>
         </div>
 
         {/* タブ */}
@@ -163,17 +206,34 @@ export default function ReinsQueuePage() {
             照合キューにデータがありません
           </div>
         ) : (
-          <div className="space-y-2">
-            {items.map(item => (
-              <QueueRow
-                key={item.id}
-                item={item}
-                expanded={expandedId === item.id}
-                onToggle={() => setExpandedId(expandedId === item.id ? null : item.id)}
-                onReload={load}
+          <>
+            {/* 全選択バー */}
+            <div className="flex items-center gap-3 px-2 mb-2">
+              <input
+                type="checkbox"
+                checked={selectedIds.size === items.length && items.length > 0}
+                onChange={toggleSelectAll}
+                className="w-4 h-4 accent-slate-700"
               />
-            ))}
-          </div>
+              <span className="text-xs text-slate-500">
+                {selectedIds.size > 0 ? `${selectedIds.size}件選択中` : '全選択'}
+              </span>
+            </div>
+            <div className="space-y-2">
+              {items.map(item => (
+                <QueueRow
+                  key={item.id}
+                  item={item}
+                  expanded={expandedId === item.id}
+                  onToggle={() => setExpandedId(expandedId === item.id ? null : item.id)}
+                  onReload={load}
+                  selected={selectedIds.has(item.id)}
+                  onSelect={() => toggleSelect(item.id)}
+                  onDelete={() => deleteSelected([item.id])}
+                />
+              ))}
+            </div>
+          </>
         )}
       </div>
     </div>
@@ -181,17 +241,28 @@ export default function ReinsQueuePage() {
 }
 
 // ── 一覧行 ──────────────────────────────────────────────────
-function QueueRow({ item, expanded, onToggle, onReload }: {
+function QueueRow({ item, expanded, onToggle, onReload, selected, onSelect, onDelete }: {
   item: QueueItem; expanded: boolean; onToggle: () => void; onReload: () => void
+  selected: boolean; onSelect: () => void; onDelete: () => void
 }) {
   const p = item.property
   const isSale = p?.transaction_type === 'sale'
   const price = isSale ? fmtPrice(p?.current_price ?? null) : fmtRent(p?.monthly_rent ?? null)
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+    <div className={`bg-white rounded-xl border overflow-hidden ${selected ? 'border-slate-400 ring-1 ring-slate-300' : 'border-slate-200'}`}>
       {/* サマリー行 */}
-      <button onClick={onToggle} className="w-full text-left px-5 py-3.5 hover:bg-slate-50 transition-colors">
+      <div className="flex items-start">
+        {/* チェックボックス */}
+        <div className="flex items-center px-3 pt-4" onClick={e => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onSelect}
+            className="w-4 h-4 accent-slate-700"
+          />
+        </div>
+        <button onClick={onToggle} className="flex-1 text-left px-3 py-3.5 hover:bg-slate-50 transition-colors">
         <div className="flex items-center gap-3">
           {/* ステータスバッジ */}
           <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${STATUS_COLORS[item.status] ?? 'bg-slate-100 text-slate-600'}`}>
@@ -266,7 +337,18 @@ function QueueRow({ item, expanded, onToggle, onReload }: {
             <span className="ml-auto">最終判定: {VERDICT_LABEL[item.latestResult.verdict] ?? item.latestResult.verdict}（{item.latestResult.method}）{fmtDate(item.latestResult.decided_at)}</span>
           )}
         </div>
-      </button>
+        </button>
+        {/* 個別削除ボタン */}
+        <div className="flex items-center pr-3 pt-3" onClick={e => e.stopPropagation()}>
+          <button
+            onClick={onDelete}
+            className="text-xs text-slate-300 hover:text-red-500 px-2 py-1 rounded hover:bg-red-50 transition-colors"
+            title="削除"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
 
       {/* 展開: 詳細比較 */}
       {expanded && (
