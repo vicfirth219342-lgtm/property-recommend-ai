@@ -152,6 +152,29 @@ export default function ReinsCheckPage() {
   // スコア展開
   const [expandedScoreId, setExpandedScoreId] = useState<string | null>(null)
 
+  // 一括削除
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+
+  function toggleSelectAll() {
+    const allIds = grouped.map(g => g.best.id)
+    setSelectedIds(prev => prev.size === allIds.length ? new Set() : new Set(allIds))
+  }
+
+  async function deleteSelected(ids: string[]) {
+    if (ids.length === 0) return
+    if (!confirm(`${ids.length}件を削除しますか？`)) return
+    setBulkDeleting(true)
+    await Promise.all(ids.map(id => fetch(`/api/reins-check/${id}`, { method: 'DELETE' })))
+    setChecks(prev => prev.filter(c => !ids.includes(c.id)))
+    setSelectedIds(new Set())
+    setBulkDeleting(false)
+  }
+
   const loadChecks = useCallback(async () => {
     setLoadingChecks(true)
     const res = await fetch('/api/reins-check')
@@ -519,16 +542,42 @@ export default function ReinsCheckPage() {
 
       {/* ─── 照合リスト ─── */}
       <div className="bg-white border border-slate-200 rounded-xl p-5">
-        <div className="flex justify-between items-center mb-4">
+        <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
           <h2 className="font-semibold text-slate-700">
             照合リスト
             <span className="ml-2 text-slate-400 font-normal text-sm">（{grouped.length}件表示 / DB {checks.length}件）</span>
           </h2>
-          <div className="flex gap-2 text-xs">
-            <span className="text-green-600 font-medium">{confirmedCount}件 掲載あり</span>
-            <span className="text-slate-400">{pendingCount}件 未照合</span>
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex gap-2 text-xs">
+              <span className="text-green-600 font-medium">{confirmedCount}件 掲載あり</span>
+              <span className="text-slate-400">{pendingCount}件 未照合</span>
+            </div>
+            {selectedIds.size > 0 && (
+              <button
+                onClick={() => deleteSelected([...selectedIds])}
+                disabled={bulkDeleting}
+                className="text-xs border border-red-300 text-red-600 px-3 py-1.5 rounded-lg hover:bg-red-50 disabled:opacity-50 transition-colors"
+              >
+                {bulkDeleting ? '削除中...' : `選択した${selectedIds.size}件を削除`}
+              </button>
+            )}
           </div>
         </div>
+
+        {/* 全選択バー */}
+        {grouped.length > 0 && (
+          <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-100">
+            <input
+              type="checkbox"
+              checked={selectedIds.size === grouped.length && grouped.length > 0}
+              onChange={toggleSelectAll}
+              className="w-4 h-4 accent-slate-700"
+            />
+            <span className="text-xs text-slate-500">
+              {selectedIds.size > 0 ? `${selectedIds.size}件選択中` : '全選択'}
+            </span>
+          </div>
+        )}
 
         {grouped.length === 0 && !loadingChecks && (
           <div className="text-slate-400 text-sm py-8 text-center">
@@ -547,8 +596,17 @@ export default function ReinsCheckPage() {
             const scoreExpanded = expandedScoreId === c.id
 
             return (
-              <div key={c.id} className="border border-slate-200 rounded-lg overflow-hidden">
+              <div key={c.id} className={`border rounded-lg overflow-hidden ${selectedIds.has(c.id) ? 'border-slate-400 ring-1 ring-slate-300' : 'border-slate-200'}`}>
                 <div className="px-4 py-3">
+                  <div className="flex items-start gap-2">
+                    {/* チェックボックス */}
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(c.id)}
+                      onChange={() => toggleSelect(c.id)}
+                      className="w-4 h-4 mt-0.5 accent-slate-700 flex-shrink-0"
+                    />
+                  <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
 
@@ -696,6 +754,8 @@ export default function ReinsCheckPage() {
                       {isActive ? '▲ 閉じる' : '▼ その他の方法（手動照合）'}
                     </button>
                   </div>
+                  </div>{/* flex-1 wrapper close */}
+                </div>{/* flex items-start gap-2 close */}
                 </div>
 
                 {/* 手動照合パネル */}
