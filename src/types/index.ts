@@ -211,6 +211,10 @@ export interface PropertyWithMatch extends ScrapedProperty {
   isDuplicate: boolean
   matchScore: number
   matchItems: ConditionMatchItem[]
+  /** 'exact'=確定一致, 'estimated'=推定一致(≥95%), 'none'=未照合 */
+  matchConfidence?: 'exact' | 'estimated' | 'none'
+  /** 推定一致の場合の類似度(0-100) */
+  estimatedSimilarity?: number
 }
 
 export interface ManualCrawlResult {

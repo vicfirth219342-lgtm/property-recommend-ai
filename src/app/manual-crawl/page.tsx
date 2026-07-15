@@ -266,16 +266,23 @@ function PropertyCard({
       {/* アクションボタン行 */}
       <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-100">
         {/* レインズ照合ボタン */}
-        <button
-          onClick={queueReinsCheck}
-          disabled={reinsQueuing || reinsStatus === 'queued' || reinsStatus === 'in_progress' || !prop.propertyId}
-          className="text-xs border border-slate-300 text-slate-600 px-3 py-1.5 rounded-lg hover:bg-slate-50 disabled:opacity-40 transition-colors font-medium"
-        >
-          {reinsQueuing ? '照合キュー投入中...' :
-           reinsStatus === 'queued' ? '照合待ち中...' :
-           reinsStatus === 'in_progress' ? '照合中...' :
-           'レインズ照合'}
-        </button>
+        <div className="flex flex-col gap-1 items-start">
+          {prop.matchConfidence === 'estimated' && (
+            <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+              推定一致（{prop.estimatedSimilarity}%）
+            </span>
+          )}
+          <button
+            onClick={queueReinsCheck}
+            disabled={reinsQueuing || reinsStatus === 'queued' || reinsStatus === 'in_progress' || !prop.propertyId}
+            className="text-xs border border-slate-300 text-slate-600 px-3 py-1.5 rounded-lg hover:bg-slate-50 disabled:opacity-40 transition-colors font-medium"
+          >
+            {reinsQueuing ? '照合キュー投入中...' :
+             reinsStatus === 'queued' ? '照合待ち中...' :
+             reinsStatus === 'in_progress' ? '照合中...' :
+             'レインズ照合'}
+          </button>
+        </div>
 
         {/* 提案候補追加ボタン */}
         {candidateState.done ? (

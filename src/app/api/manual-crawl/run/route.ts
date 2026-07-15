@@ -75,10 +75,10 @@ export async function POST(req: NextRequest) {
       .eq('customer_id', customerId)
     const proposedSet = new Set(proposed?.map(p => p.property_id) ?? [])
 
-    // 既知 dedup_key を取得
+    // 既知 dedup_key を取得（類似度照合用に name/price/area_sqm/walk_minutes も取得）
     const { data: existingProps } = await supabase
       .from('properties')
-      .select('id, dedup_key, raw_hash')
+      .select('id, dedup_key, raw_hash, name, price, monthly_rent, area_sqm, walk_minutes')
     const knownDedupKeys = new Set<string>(
       existingProps?.map(p => p.dedup_key).filter(Boolean) ?? []
     )
@@ -88,6 +88,11 @@ export async function POST(req: NextRequest) {
       if (p.dedup_key) dedupToId.set(p.dedup_key, p.id)
       if (p.raw_hash) urlHashToId.set(p.raw_hash, p.id)
     }
+    // 類似度照合用の配列（propertyId未解決時のフォールバック）
+    const existingForSim = (existingProps ?? []) as Array<{
+      id: string; name: string | null; price: number | null
+      monthly_rent: number | null; area_sqm: number | null; walk_minutes: number | null
+    }>
 
     // 顧客条件から transaction_type を取得してクローラーに渡す
     // （クローラー側のURL自動検出よりも明示的な条件値を優先）
@@ -152,14 +157,36 @@ export async function POST(req: NextRequest) {
 
     const properties = allScraped.map(prop => {
       const dedupKey = buildDedupKey(prop)
-      const propertyId = savedIds.get(dedupKey) ?? dedupToId.get(dedupKey) ?? urlHashToId.get(buildUrlHash(prop.url))
       const isNew = savedIds.has(dedupKey)
+
+      // 1. 新規保存 → 2. dedup_key → 3. raw_hash(URL) の順で解決
+      let propertyId = savedIds.get(dedupKey) ?? dedupToId.get(dedupKey) ?? urlHashToId.get(buildUrlHash(prop.url))
+      let matchConfidence: 'exact' | 'estimated' | 'none' = propertyId ? 'exact' : 'none'
+      let estimatedSimilarity: number | undefined
+
+      // 4. 類似度照合（≥95% で「推定一致」）
+      if (!propertyId && existingForSim.length > 0) {
+        let bestId = ''
+        let bestScore = 0
+        for (const ex of existingForSim) {
+          const sim = calcPropSimilarity(prop, ex)
+          if (sim > bestScore) { bestScore = sim; bestId = ex.id }
+        }
+        if (bestScore >= 0.95) {
+          propertyId = bestId
+          matchConfidence = 'estimated'
+          estimatedSimilarity = Math.round(bestScore * 100)
+        }
+      }
+
       return {
         ...prop,
         propertyId,
         isNew,
         isDuplicate: !isNew,
         matchScore: calcMatchScore(prop, cond),
+        matchConfidence,
+        estimatedSimilarity,
         isAlreadyProposed: propertyId ? proposedSet.has(propertyId) : false,
       }
     }).sort((a, b) => b.matchScore - a.matchScore)
@@ -210,6 +237,69 @@ export async function POST(req: NextRequest) {
 // 売買価格を円→万円に変換（クローラーは円単位で返すが、DB・照合ロジックは万円前提）
 function yenToMan(price: number | null | undefined): number | null {
   return price != null ? Math.round(price / 10000) : null
+}
+
+// ── 類似度照合 ───────────────────────────────────────────────
+// Dice係数（bigram）で文字列類似度を計算
+function diceSimilarity(a: string, b: string): number {
+  if (a === b) return 1
+  if (a.length < 2 || b.length < 2) return 0
+  const bigramsA = new Map<string, number>()
+  for (let i = 0; i < a.length - 1; i++) {
+    const bg = a.slice(i, i + 2)
+    bigramsA.set(bg, (bigramsA.get(bg) ?? 0) + 1)
+  }
+  let intersection = 0
+  for (let i = 0; i < b.length - 1; i++) {
+    const bg = b.slice(i, i + 2)
+    const cnt = bigramsA.get(bg) ?? 0
+    if (cnt > 0) { intersection++; bigramsA.set(bg, cnt - 1) }
+  }
+  return (2 * intersection) / (a.length - 1 + b.length - 1)
+}
+
+function normForSim(s: string): string {
+  return s.replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+          .replace(/\s+/g, '').toLowerCase()
+}
+
+function calcPropSimilarity(
+  prop: ScrapedProperty,
+  ex: { id: string; name: string | null; price: number | null; monthly_rent: number | null; area_sqm: number | null; walk_minutes: number | null }
+): number {
+  let score = 0, total = 0
+
+  // 物件名（重み3）
+  if (prop.name && ex.name) {
+    total += 3
+    score += diceSimilarity(normForSim(prop.name), normForSim(ex.name)) * 3
+  }
+
+  // 価格（重み2）: クローラーは円、DBは万円
+  const propPriceMan = prop.price ? Math.round(prop.price / 10000) : null
+  const propRentMan  = prop.monthly_rent ? Math.round(prop.monthly_rent / 10000) : null
+  const exPrice = ex.price ?? ex.monthly_rent
+  const myPrice = propPriceMan ?? propRentMan
+  if (myPrice && exPrice) {
+    total += 2
+    const diff = Math.abs(myPrice - exPrice) / exPrice
+    score += (diff < 0.01 ? 1 : diff < 0.05 ? 0.5 : 0) * 2
+  }
+
+  // 面積（重み2）
+  if (prop.area_sqm && ex.area_sqm) {
+    total += 2
+    const diff = Math.abs(prop.area_sqm - ex.area_sqm) / ex.area_sqm
+    score += (diff < 0.01 ? 1 : diff < 0.03 ? 0.5 : 0) * 2
+  }
+
+  // 駅距離（重み1）
+  if (prop.walk_minutes != null && ex.walk_minutes != null) {
+    total += 1
+    score += prop.walk_minutes === ex.walk_minutes ? 1 : Math.abs(prop.walk_minutes - ex.walk_minutes) <= 1 ? 0.5 : 0
+  }
+
+  return total > 0 ? score / total : 0
 }
 
 function calcMatchScore(prop: ScrapedProperty, cond: Record<string, unknown> | null): number {
