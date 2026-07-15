@@ -43,18 +43,28 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // 条件更新 (upsert)
-  await supabase.from('customer_conditions').upsert(
-    {
-      customer_id: id,
-      transaction_type: transaction_type ?? 'sale',
-      area, property_type,
-      budget_min, budget_max,
-      rent_min, rent_max,
-      area_sqm_min, area_sqm_max, walk_minutes_max, building_age_max, other_conditions,
-    },
-    { onConflict: 'customer_id' }
-  )
+  // 条件更新: 既存レコードがあればUPDATE、なければINSERT
+  const { data: existingCond } = await supabase
+    .from('customer_conditions')
+    .select('id')
+    .eq('customer_id', id)
+    .single()
+
+  const condPayload = {
+    customer_id: id,
+    transaction_type: transaction_type ?? 'sale',
+    area, property_type,
+    budget_min, budget_max,
+    rent_min, rent_max,
+    area_sqm_min, area_sqm_max, walk_minutes_max, building_age_max, other_conditions,
+    updated_at: new Date().toISOString(),
+  }
+
+  if (existingCond?.id) {
+    await supabase.from('customer_conditions').update(condPayload).eq('id', existingCond.id)
+  } else {
+    await supabase.from('customer_conditions').insert(condPayload)
+  }
 
   // 変更ログ
   await supabase.from('customer_change_logs').insert({
