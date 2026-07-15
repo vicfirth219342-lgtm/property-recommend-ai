@@ -78,13 +78,15 @@ export async function POST(req: NextRequest) {
     // 既知 dedup_key を取得
     const { data: existingProps } = await supabase
       .from('properties')
-      .select('id, dedup_key')
+      .select('id, dedup_key, raw_hash')
     const knownDedupKeys = new Set<string>(
       existingProps?.map(p => p.dedup_key).filter(Boolean) ?? []
     )
     const dedupToId = new Map<string, string>()
+    const urlHashToId = new Map<string, string>()
     for (const p of existingProps ?? []) {
       if (p.dedup_key) dedupToId.set(p.dedup_key, p.id)
+      if (p.raw_hash) urlHashToId.set(p.raw_hash, p.id)
     }
 
     // 顧客条件から transaction_type を取得してクローラーに渡す
@@ -150,7 +152,7 @@ export async function POST(req: NextRequest) {
 
     const properties = allScraped.map(prop => {
       const dedupKey = buildDedupKey(prop)
-      const propertyId = savedIds.get(dedupKey) ?? dedupToId.get(dedupKey)
+      const propertyId = savedIds.get(dedupKey) ?? dedupToId.get(dedupKey) ?? urlHashToId.get(buildUrlHash(prop.url))
       const isNew = savedIds.has(dedupKey)
       return {
         ...prop,
