@@ -454,24 +454,10 @@ function buildSuumoUrl(cond: CustomerCondition, mappings: PortalAreaMapping[]): 
   for (const r of stationPathMatches) {
     const path = r.mapping!.portal_url_param
     const typeSegment = suumoStationTypeSegment(cond.property_type, isSale)
-    const qParts: string[] = []
-    if (isSale) {
-      if (cond.budget_min) qParts.push(`kb=${cond.budget_min}`)
-      if (cond.budget_max) qParts.push(`kt=${cond.budget_max}`)
-    } else {
-      // 賃貸: srm/srM は円単位（rent_min/max は万円 → ×10000）
-      if (cond.rent_min) qParts.push(`srm=${cond.rent_min * 10000}`)
-      if (cond.rent_max) qParts.push(`srM=${cond.rent_max * 10000}`)
-    }
-    if (cond.area_sqm_min) qParts.push(`mb=${Math.floor(cond.area_sqm_min)}`)
-    if (cond.area_sqm_max) qParts.push(`mt=${Math.ceil(cond.area_sqm_max)}`)
-    if (wk) qParts.push(`ekk=${wk}`)
-    if (ag) qParts.push(`cn=${ag}`)
-    qParts.push(...mdParts)
-    qParts.push(...extraParts)
-    const qs = qParts.length > 0 ? `?${qParts.join('&')}` : ''
+    // ms/chuko/ek_XXXXX/ 形式はフィルタクエリパラメータを受け付けない（エラー画面になる）。
+    // suumo.ts が sort=3&page=N を付与するため、ベースURLのみ生成する。
     urls.push({
-      url: `https://suumo.jp/${typeSegment}/${path}/${qs}`,
+      url: `https://suumo.jp/${typeSegment}/${path}/`,
       label: `SUUMO ${r.inputName} ${isSale ? '売買' : '賃貸'}`,
     })
   }
