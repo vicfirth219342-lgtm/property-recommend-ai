@@ -42,6 +42,12 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
         </div>
         <div className="flex gap-2">
           <Link
+            href={`/customers/${id}/reins-search`}
+            className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 text-sm transition-colors font-medium"
+          >
+            レインズで物件探索
+          </Link>
+          <Link
             href={`/customers/${id}/proposal-candidates`}
             className="bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-700 text-sm transition-colors font-medium"
           >

@@ -5,7 +5,7 @@
   <title>レインズ照合ツール</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, 'Hiragino Sans', sans-serif; width: 320px; color: #1e293b; }
+    body { font-family: -apple-system, 'Hiragino Sans', sans-serif; width: 340px; color: #1e293b; }
 
     .header {
       background: #1e3a5f; color: white;
@@ -16,6 +16,23 @@
     .header a { color: #93c5fd; font-size: 11px; text-decoration: none; }
     .header a:hover { text-decoration: underline; }
 
+    /* タブ */
+    .tabs {
+      display: flex; border-bottom: 1px solid #e2e8f0;
+      background: #f8fafc;
+    }
+    .tab-btn {
+      flex: 1; padding: 8px 4px; font-size: 11px; font-weight: 500;
+      border: none; background: transparent; cursor: pointer;
+      color: #64748b; border-bottom: 2px solid transparent;
+      transition: all .15s;
+    }
+    .tab-btn.active { color: #1e40af; border-bottom-color: #1e40af; background: white; }
+    .tab-btn:hover:not(.active) { background: #f1f5f9; }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
     .body { padding: 14px 16px; }
 
     #pageStatus {
@@ -25,7 +42,16 @@
     #pageStatus.ok   { background: #ecfdf5; color: #15803d; }
     #pageStatus.warn { background: #fffbeb; color: #b45309; }
 
-    .desc { font-size: 12px; color: #475569; line-height: 1.6; margin-bottom: 12px; }
+    #apiUrlBar {
+      font-size: 10px; padding: 5px 8px; border-radius: 5px; margin-bottom: 6px;
+      background: #f1f5f9; color: #64748b; word-break: break-all; display: none;
+    }
+
+    #previewUrlWarn {
+      display: none; font-size: 11px; line-height: 1.6;
+      background: #fef2f2; border: 1px solid #fca5a5; border-radius: 6px;
+      padding: 9px 10px; margin-bottom: 10px; color: #b91c1c;
+    }
 
     /* セッション状態パネル */
     #sessionPanel {
@@ -40,6 +66,19 @@
     .session-count.empty { font-size: 13px; color: #94a3b8; }
     .session-hint { font-size: 10px; color: #7dd3fc; margin-top: 2px; }
 
+    /* タスクパネル（レインズ検索モード） */
+    #taskPanel {
+      border-radius: 8px; padding: 10px 12px; margin-bottom: 12px;
+      border: 1px solid #e2e8f0; background: #f8fafc;
+    }
+    #taskPanel.has-task { background: #eff6ff; border-color: #93c5fd; }
+    .task-label { font-size: 11px; font-weight: 600; color: #1e40af; margin-bottom: 6px; }
+    .task-label.empty { color: #94a3b8; }
+    .cond-grid { display: grid; grid-template-columns: 72px 1fr; gap: 2px 8px; font-size: 11px; }
+    .cond-key { color: #64748b; }
+    .cond-val { color: #1e293b; font-weight: 500; }
+    .cond-val.empty { color: #cbd5e1; font-weight: 400; }
+
     .btn-primary {
       width: 100%; padding: 11px;
       background: #1e40af; color: white; border: none;
@@ -48,6 +87,15 @@
     }
     .btn-primary:hover:not(:disabled) { background: #1d4ed8; }
     .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .btn-indigo {
+      width: 100%; padding: 11px;
+      background: #4f46e5; color: white; border: none;
+      border-radius: 8px; font-size: 13px; font-weight: 700;
+      cursor: pointer; transition: background .15s; margin-bottom: 6px;
+    }
+    .btn-indigo:hover:not(:disabled) { background: #4338ca; }
+    .btn-indigo:disabled { opacity: 0.45; cursor: not-allowed; }
 
     .btn-secondary {
       width: 100%; padding: 8px;
@@ -67,17 +115,13 @@
     }
     .btn-danger:hover:not(:disabled) { background: #fef2f2; }
 
-    #result {
+    #result, #taskResult {
       margin-top: 10px; padding: 10px 12px;
       border-radius: 8px; font-size: 12px; display: none;
     }
-    #result.success { background: #ecfdf5; border: 1px solid #86efac; color: #15803d; }
-    #result.error   { background: #fef2f2; border: 1px solid #fca5a5; color: #dc2626; }
-    #result.info    { background: #eff6ff; border: 1px solid #93c5fd; color: #1d4ed8; }
-
-    .stat-row { display: flex; justify-content: space-between; margin-top: 5px; font-size: 12px; }
-    .stat-num { font-size: 15px; font-weight: 700; }
-    .sub { font-size: 10px; opacity: .7; }
+    #result.success,  #taskResult.success { background: #ecfdf5; border: 1px solid #86efac; color: #15803d; }
+    #result.error,    #taskResult.error   { background: #fef2f2; border: 1px solid #fca5a5; color: #dc2626; }
+    #result.info,     #taskResult.info    { background: #eff6ff; border: 1px solid #93c5fd; color: #1d4ed8; }
 
     .no-config {
       text-align: center; padding: 16px 12px;
@@ -87,6 +131,11 @@
 
     hr { border: none; border-top: 1px solid #e2e8f0; margin: 10px 0; }
     .step-hint { font-size: 10px; color: #94a3b8; text-align: center; margin-top: 4px; }
+    .phase-badge {
+      display: inline-block; font-size: 10px;
+      background: #fef3c7; color: #92400e; border-radius: 4px;
+      padding: 1px 6px; margin-bottom: 8px;
+    }
   </style>
 </head>
 <body>
@@ -95,54 +144,74 @@
     <a id="optionsLink" href="#">設定</a>
   </div>
 
-  <div class="body">
-    <div id="pageStatus">ページを確認中...</div>
+  <!-- タブ切り替え -->
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="tab-import">取り込みモード</button>
+    <button class="tab-btn"       data-tab="tab-search">レインズ検索</button>
+  </div>
 
-    <!-- 接続先URL表示 -->
-    <div id="apiUrlBar" style="
-      font-size:10px; padding:5px 8px; border-radius:5px; margin-bottom:6px;
-      background:#f1f5f9; color:#64748b; word-break:break-all; display:none;
-    ">
-      <span style="color:#94a3b8;">接続先API: </span><span id="apiUrlText"></span>
-    </div>
+  <!-- ── タブ1: 既存の取り込みモード ──────────────────────── -->
+  <div id="tab-import" class="tab-panel active">
+    <div class="body">
+      <div id="pageStatus">ページを確認中...</div>
 
-    <!-- Preview URL警告（強調表示） -->
-    <div id="previewUrlWarn" style="
-      display:none; font-size:11px; line-height:1.6;
-      background:#fef2f2; border:1px solid #fca5a5; border-radius:6px;
-      padding:9px 10px; margin-bottom:10px; color:#b91c1c;
-    "></div>
-
-    <div id="mainContent">
-
-      <!-- セッション状態 -->
-      <div id="sessionPanel" class="empty">
-        <div class="session-row">
-          <span class="session-label empty" id="sessionLabel">セッションなし</span>
-          <span class="session-count empty" id="sessionCount">—</span>
-        </div>
-        <div class="session-hint" id="sessionHint">「このページを追加」でセッションを開始</div>
+      <div id="apiUrlBar">
+        <span style="color:#94a3b8;">接続先API: </span><span id="apiUrlText"></span>
       </div>
 
-      <!-- ステップ1: ページ追加 -->
-      <button id="addPageBtn" class="btn-primary">このページを追加</button>
+      <div id="previewUrlWarn"></div>
 
-      <!-- ステップ2: 照合（1ページ以上追加後に有効化） -->
-      <button id="openAppBtn" class="btn-secondary" disabled>
-        アプリで照合する（→ 照合リストを開く）
+      <div id="mainContent">
+        <div id="sessionPanel" class="empty">
+          <div class="session-row">
+            <span class="session-label empty" id="sessionLabel">セッションなし</span>
+            <span class="session-count empty" id="sessionCount">—</span>
+          </div>
+          <div class="session-hint" id="sessionHint">「このページを追加」でセッションを開始</div>
+        </div>
+
+        <button id="addPageBtn" class="btn-primary">このページを追加</button>
+        <button id="openAppBtn" class="btn-secondary" disabled>
+          アプリで照合する（→ 照合リストを開く）
+        </button>
+        <button id="clearBtn" class="btn-danger" disabled>セッションをクリア</button>
+
+        <div id="result"></div>
+        <div class="step-hint" id="stepHint">複数ページを追加してからアプリで照合してください</div>
+      </div>
+
+      <div id="noConfig" class="no-config" style="display:none">
+        送信先URLが未設定です。<br>
+        <a id="openOptions" href="#">設定画面を開く</a> でURLを入力してください。
+      </div>
+    </div>
+  </div>
+
+  <!-- ── タブ2: レインズ検索モード（新規） ─────────────────── -->
+  <div id="tab-search" class="tab-panel">
+    <div class="body">
+      <div class="phase-badge">第1段階 — 条件確認モード</div>
+
+      <!-- 検索タスクの状態表示 -->
+      <div id="taskPanel">
+        <div class="task-label empty" id="taskLabel">顧客条件が未受信です</div>
+        <div id="taskCondGrid" class="cond-grid" style="display:none"></div>
+      </div>
+
+      <button id="fetchTaskBtn" class="btn-indigo">
+        最新の顧客条件を受け取る
       </button>
 
-      <!-- セッションクリア -->
-      <button id="clearBtn" class="btn-danger" disabled>セッションをクリア</button>
+      <button id="fillFormBtn" class="btn-secondary" disabled>
+        フォームに条件を入力する（第1段階: コンソール表示）
+      </button>
 
-      <div id="result"></div>
+      <div id="taskResult"></div>
 
-      <div class="step-hint" id="stepHint">複数ページを追加してからアプリで照合してください</div>
-    </div>
-
-    <div id="noConfig" class="no-config" style="display:none">
-      送信先URLが未設定です。<br>
-      <a id="openOptions" href="#">設定画面を開く</a> でURLを入力してください。
+      <div class="step-hint" style="margin-top:8px">
+        Webアプリで「レインズで物件探索」を押した後、<br>
+        「最新の顧客条件を受け取る」をクリックしてください
+      </div>
     </div>
   </div>
 

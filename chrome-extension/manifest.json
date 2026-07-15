@@ -1,13 +1,20 @@
 {
   "manifest_version": 3,
   "name": "レインズ照合ツール",
-  "version": "1.0.0",
-  "description": "レインズ検索結果を照合アプリへ送信します",
-  "permissions": ["activeTab", "scripting", "storage"],
+  "version": "1.1.0",
+  "description": "レインズ検索結果を照合アプリへ送信・顧客条件をフォームに入力します",
+  "permissions": ["activeTab", "scripting", "storage", "tabs"],
   "host_permissions": ["https://*/*", "http://localhost:*/"],
   "action": {
     "default_popup": "popup.html",
     "default_title": "レインズ照合ツール"
   },
-  "options_page": "options.html"
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["https://system.reins.jp/*", "https://*.reins.jp/*", "http://*.reins.jp/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
 }
