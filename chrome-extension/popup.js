@@ -61,9 +61,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   })
 
   // ── 設定読み込み ──────────────────────────────────────────
-  const stored = await chrome.storage.local.get(['apiBase', 'token'])
+  const stored = await chrome.storage.local.get(['apiBase', 'token', 'currentTask'])
   const token = stored.token ?? ''
   let apiBase = stored.apiBase ?? ''
+  let currentTask = stored.currentTask ?? null
 
   try { apiBase = new URL(apiBase).origin } catch { /* 不正URL */ }
 
@@ -597,8 +598,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ── セッションをクリア ────────────────────────────────────────
   clearBtn.addEventListener('click', async () => {
-    if (!sessionId) return
-    if (!confirm(`${sessionCount.textContent}分のデータを削除しますか？`)) return
+    if (!confirm('取り込みカウントをリセットしますか？')) return
     clearBtn.disabled = true
     importedTotal = 0
     importedPages = 0
