@@ -61,11 +61,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   })
 
   // ── 設定読み込み ──────────────────────────────────────────
-  const stored = await chrome.storage.local.get(['apiBase', 'token', 'sessionId', 'currentTask'])
+  const stored = await chrome.storage.local.get(['apiBase', 'token'])
   const token = stored.token ?? ''
   let apiBase = stored.apiBase ?? ''
-  let sessionId = stored.sessionId ?? null
-  let currentTask = stored.currentTask ?? null
 
   try { apiBase = new URL(apiBase).origin } catch { /* 不正URL */ }
 
@@ -118,49 +116,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     pageStatusEl.className = 'warn'
   }
 
-  // ── セッション状態UI（取り込みモード） ──────────────────────
-  function updateSessionUI(count, id) {
-    if (!count || count === 0) {
+  // ── 取り込み状態UI（ローカル管理） ──────────────────────────
+  const importState = await chrome.storage.local.get(['importedTotal', 'importedPages'])
+  let importedTotal = importState.importedTotal ?? 0
+  let importedPages = importState.importedPages ?? 0
+
+  function updateSessionUI() {
+    if (importedTotal === 0) {
       sessionPanel.className = 'empty'
-      sessionLabel.textContent = 'セッションなし'
+      sessionLabel.textContent = '未取り込み'
       sessionLabel.className = 'session-label empty'
       sessionCount.textContent = '—'
       sessionCount.className = 'session-count empty'
-      sessionHint.textContent = '「このページを追加」でセッションを開始'
+      sessionHint.textContent = '「このページを取り込む」で開始'
       openAppBtn.disabled = true
       clearBtn.disabled = true
       stepHint.textContent = '複数ページを追加してからアプリで照合してください'
     } else {
       sessionPanel.className = ''
-      sessionLabel.textContent = '取り込み中'
+      sessionLabel.textContent = '取り込み済み'
       sessionLabel.className = 'session-label'
-      sessionCount.textContent = `${count}ページ`
+      sessionCount.textContent = `${importedPages}ページ / ${importedTotal}件`
       sessionCount.className = 'session-count'
-      sessionHint.textContent = `セッション ID: ${(id ?? '').slice(0, 8)}...`
+      sessionHint.textContent = '続けて次のページも取り込めます'
       openAppBtn.disabled = false
       clearBtn.disabled = false
-      stepHint.textContent = '続けて次のページも追加できます'
+      stepHint.textContent = '物件一覧で顧客との照合を確認してください'
     }
   }
 
-  // 保存済みセッションの状態確認
-  if (sessionId) {
-    try {
-      const res = await fetch(`${apiBase}/api/reins/sessions/current`, {
-        headers: token ? { 'x-extension-token': token } : {},
-      })
-      if (res.ok) {
-        const data = await res.json()
-        if (data.session?.id === sessionId) {
-          updateSessionUI(data.session.page_count, sessionId)
-        } else {
-          sessionId = data.session?.id ?? null
-          await chrome.storage.local.set({ sessionId })
-          updateSessionUI(data.session?.page_count ?? 0, sessionId)
-        }
-      }
-    } catch { /* ignore */ }
-  }
+  updateSessionUI()
 
   // ── フォーム解析モード ────────────────────────────────────────
   const analyzeFormBtn  = document.getElementById('analyzeFormBtn')
@@ -586,10 +571,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
 
-      openAppBtn.disabled = false
+      importedTotal += data.imported_count
+      importedPages += 1
+      await chrome.storage.local.set({ importedTotal, importedPages })
+      updateSessionUI()
+
       showResult(
         `✓ ${data.imported_count}件の物件を取り込みました（抽出 ${data.extracted_count}件）\n` +
-        `別のページも同様に取り込めます。物件一覧で顧客との照合を確認してください。`,
+        `累計: ${importedPages}ページ / ${importedTotal}件\n` +
+        `続けて次のページも取り込めます。`,
         'success'
       )
     } catch (e) {
@@ -610,14 +600,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!sessionId) return
     if (!confirm(`${sessionCount.textContent}分のデータを削除しますか？`)) return
     clearBtn.disabled = true
-    try {
-      const headers = token ? { 'x-extension-token': token } : {}
-      await fetch(`${apiBase}/api/reins/sessions/${sessionId}`, { method: 'DELETE', headers })
-    } catch { /* ignore */ }
-    sessionId = null
-    await chrome.storage.local.set({ sessionId: null })
-    updateSessionUI(0, null)
-    showResult('セッションをクリアしました', 'info')
+    importedTotal = 0
+    importedPages = 0
+    await chrome.storage.local.set({ importedTotal: 0, importedPages: 0 })
+    updateSessionUI()
+    showResult('取り込みカウントをクリアしました', 'info')
   })
 
   function showResult(text, type = 'info') {
