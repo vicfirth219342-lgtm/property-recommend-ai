@@ -2,6 +2,7 @@ import { createServiceClient } from '@/lib/supabase'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import CustomerMatchedProperties from './CustomerMatchedProperties'
+import CustomerProposals from './CustomerProposals'
 
 export default async function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -90,6 +91,11 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
           <p className="text-sm text-slate-600 whitespace-pre-wrap">{customer.sales_memo}</p>
         </div>
       )}
+
+      {/* 提案済み物件 */}
+      <div className="mb-6">
+        <CustomerProposals customerId={id} />
+      </div>
 
       {/* この顧客に合うレインズ物件（横断照合・都度計算） */}
       <CustomerMatchedProperties customerId={id} />
