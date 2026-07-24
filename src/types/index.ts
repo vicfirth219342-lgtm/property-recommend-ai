@@ -36,7 +36,9 @@ export interface CustomerCondition {
   customer_id: string
   transaction_type: TransactionType
   area: string | null
+  preferred_station: string | null
   property_type: string | null
+  floor_plan: string | null
   // 売買
   budget_min: number | null
   budget_max: number | null
@@ -112,6 +114,27 @@ export interface Property {
   last_seen_at: string | null
   fetched_at: string
   created_at: string
+}
+
+// レインズから取り込んだ物件（reins_imported_properties テーブル）
+export interface ReinsImportedProperty {
+  id: string
+  reins_number: string | null
+  property_name: string | null
+  address: string | null
+  price_man: number | null
+  area_sqm: number | null
+  floor_plan: string | null
+  floor_number: number | null
+  built_year: number | null
+  built_month: number | null
+  management_fee: number | null
+  transaction_type: string | null
+  agent_company: string | null
+  station: string | null
+  walk_minutes: number | null
+  page_url: string | null
+  imported_at: string | null
 }
 
 export interface Proposal {

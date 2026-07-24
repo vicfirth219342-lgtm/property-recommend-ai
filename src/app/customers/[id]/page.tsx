@@ -1,7 +1,7 @@
 import { createServiceClient } from '@/lib/supabase'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import UnproposedProperties from './UnproposedProperties'
+import CustomerMatchedProperties from './CustomerMatchedProperties'
 
 export default async function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -17,7 +17,6 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
   if (!customer) notFound()
 
   const cond = customer.customer_conditions?.[0]
-  const urls = customer.customer_search_urls ?? []
 
   const RANK_COLORS: Record<string, string> = {
     A: 'bg-red-100 text-red-700',
@@ -41,24 +40,7 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
           <p className="text-slate-500 text-sm">No. {customer.customer_no}</p>
         </div>
         <div className="flex gap-2">
-          <Link
-            href={`/customers/${id}/reins-search`}
-            className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 text-sm transition-colors font-medium"
-          >
-            レインズで物件探索
-          </Link>
-          <Link
-            href={`/customers/${id}/proposal-candidates`}
-            className="bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-700 text-sm transition-colors font-medium"
-          >
-            提案候補リスト
-          </Link>
-          <Link
-            href={`/customers/${id}/candidates`}
-            className="border border-slate-300 text-slate-600 px-4 py-2 rounded-lg hover:bg-slate-50 text-sm transition-colors"
-          >
-            条件照合一覧
-          </Link>
+          {/* ポータル探索・提案候補・条件照合はポータル停止に伴い非表示（コードは残置） */}
           <Link
             href={`/customers/${id}/edit`}
             className="border border-slate-300 text-slate-600 px-4 py-2 rounded-lg hover:bg-slate-50 text-sm transition-colors"
@@ -81,8 +63,11 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
           <div className="bg-white rounded-xl border border-slate-200 p-5">
             <h2 className="font-semibold text-slate-700 mb-3">希望条件</h2>
             <dl className="space-y-1.5 text-sm">
+              <div className="flex gap-2"><dt className="text-slate-500 font-medium w-20">売買/賃貸</dt><dd className="text-slate-700">{cond.transaction_type === 'rent' ? '賃貸' : '売買'}</dd></div>
               {cond.area && <div className="flex gap-2"><dt className="text-slate-500 font-medium w-20">エリア</dt><dd className="text-slate-700">{cond.area}</dd></div>}
+              {cond.preferred_station && <div className="flex gap-2"><dt className="text-slate-500 font-medium w-20">希望駅</dt><dd className="text-slate-700">{cond.preferred_station}</dd></div>}
               {cond.property_type && <div className="flex gap-2"><dt className="text-slate-500 font-medium w-20">種別</dt><dd className="text-slate-700">{cond.property_type}</dd></div>}
+              {cond.floor_plan && <div className="flex gap-2"><dt className="text-slate-500 font-medium w-20">間取り</dt><dd className="text-slate-700">{cond.floor_plan}</dd></div>}
               {(cond.budget_min || cond.budget_max) && (
                 <div className="flex gap-2">
                   <dt className="text-slate-500 font-medium w-20">予算</dt>
@@ -97,23 +82,7 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
         )}
       </div>
 
-      {/* 検索URL */}
-      {urls.length > 0 && (
-        <div className="bg-white rounded-xl border border-slate-200 p-5 mb-6">
-          <h2 className="font-semibold text-slate-700 mb-3">登録済み検索URL</h2>
-          <div className="space-y-2">
-            {urls.map((u: { site: string; url: string; is_active: boolean }) => (
-              <div key={u.site} className="flex items-center gap-3 text-sm">
-                <span className="font-medium uppercase w-16 text-slate-600">{u.site}</span>
-                <a href={u.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline truncate">
-                  {u.url}
-                </a>
-                {!u.is_active && <span className="text-red-400 text-xs">停止中</span>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* 検索URL（ポータル停止に伴い非表示。urls は残置） */}
 
       {customer.sales_memo && (
         <div className="bg-white rounded-xl border border-slate-200 p-5 mb-6">
@@ -122,8 +91,8 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
         </div>
       )}
 
-      {/* 未提案物件 */}
-      <UnproposedProperties customerId={id} />
+      {/* この顧客に合うレインズ物件（横断照合・都度計算） */}
+      <CustomerMatchedProperties customerId={id} />
     </div>
   )
 }

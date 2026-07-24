@@ -162,6 +162,189 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch { /* ignore */ }
   }
 
+  // ── フォーム解析モード ────────────────────────────────────────
+  const analyzeFormBtn  = document.getElementById('analyzeFormBtn')
+  const analyzeResultEl = document.getElementById('analyzeResult')
+
+  analyzeFormBtn.addEventListener('click', async () => {
+    analyzeFormBtn.disabled = true
+    analyzeFormBtn.textContent = '解析中...'
+    analyzeResultEl.style.display = 'none'
+
+    try {
+      const [{ result: analysis }] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          // ─────────────────────────────────────────────────────
+          // レインズ フォーム解析スクリプト
+          // Vue.js/Nuxt.js SPA 対応: name属性なし・__BVID__IDを前提
+          // ─────────────────────────────────────────────────────
+
+          function getLabel(el) {
+            // 1. HTML labels属性
+            if (el.labels?.[0]) return el.labels[0].innerText.trim()
+            // 2. aria-label
+            const aria = el.getAttribute('aria-label')
+            if (aria) return aria
+            // 3. aria-labelledby
+            const lbId = el.getAttribute('aria-labelledby')
+            if (lbId) {
+              const lb = document.getElementById(lbId)
+              if (lb) return lb.innerText.trim()
+            }
+            // 4. 親要素を5段階まで遡ってラベルを探す
+            let p = el.parentElement
+            for (let i = 0; i < 6; i++) {
+              if (!p) break
+              // label 要素（入力要素を含まないもの）
+              for (const lb of p.querySelectorAll('label, .p-form-label, [class*="-label"], dt, th')) {
+                if (!lb.contains(el) && lb.innerText.trim()) return lb.innerText.trim()
+              }
+              p = p.parentElement
+            }
+            return null
+          }
+
+          function getCssPath(el) {
+            const parts = []
+            let cur = el
+            for (let i = 0; i < 5; i++) {
+              if (!cur || cur === document.body) break
+              let part = cur.tagName.toLowerCase()
+              if (cur.id && !cur.id.startsWith('__BVID__')) part += `#${cur.id}`
+              const stableClasses = Array.from(cur.classList)
+                .filter(c => !c.match(/^(nuxt|v-|__)/))
+                .slice(0, 3)
+              if (stableClasses.length) part += `.${stableClasses.join('.')}`
+              parts.unshift(part)
+              cur = cur.parentElement
+            }
+            return parts.join(' > ')
+          }
+
+          function getVueProp(el) {
+            // Vue 2 (__vue__) / Vue 3 (__vueParentComponent) の両方を試みる
+            try {
+              let v = el.__vue__ || el._vei
+              if (!v && el.__vueParentComponent) {
+                const comp = el.__vueParentComponent
+                const props = comp.props || {}
+                const data = comp.setupState || comp.data?.() || {}
+                return JSON.stringify({ props, data }).slice(0, 200)
+              }
+              if (v && v.$props) return JSON.stringify(v.$props).slice(0, 200)
+            } catch (e) { /* ignore */ }
+            return null
+          }
+
+          const elements = []
+          document.querySelectorAll('input, select, textarea, button[type="submit"], button[type="button"]').forEach(el => {
+            const label = getLabel(el)
+            const cssPath = getCssPath(el)
+            const vueProp = getVueProp(el)
+
+            const info = {
+              tag: el.tagName.toLowerCase(),
+              type: el.getAttribute('type') || (el.tagName === 'SELECT' ? 'select' : null),
+              id: el.id && !el.id.startsWith('__BVID__') ? el.id : null,
+              bvid: el.id?.startsWith('__BVID__') ? el.id : null,
+              name: el.name || null,
+              label: label,
+              currentValue: el.value || null,
+              checked: el.type === 'checkbox' || el.type === 'radio' ? el.checked : undefined,
+              cssPath,
+              vueProp,
+            }
+
+            if (el.tagName === 'SELECT') {
+              info.options = Array.from(el.options).map(o => ({
+                text: o.text.trim(),
+                value: o.value,
+                selected: o.selected,
+              }))
+            }
+            if (el.tagName === 'BUTTON') {
+              info.text = el.innerText.trim()
+            }
+            elements.push(info)
+          })
+
+          // コンソール出力（ページのコンソールに表示）
+          console.group('[レインズ照合] フォーム解析結果')
+          console.log('URL:', window.location.href)
+          console.log('要素数:', elements.length)
+          console.table(elements.map(({ tag, type, label, id, bvid, name, currentValue, cssPath }) =>
+            ({ tag, type, label, id, bvid, name, currentValue, cssPath: cssPath?.slice(-60) })
+          ))
+          elements.filter(e => e.tag === 'select').forEach(e => {
+            console.log(`\n【SELECT】label="${e.label}" bvid="${e.bvid}"`)
+            console.table(e.options)
+          })
+          console.log('\n=== JSON (コピー用) ===')
+          console.log(JSON.stringify(elements, null, 2))
+          console.groupEnd()
+
+          // サマリーをポップアップへ返す
+          const selects  = elements.filter(e => e.tag === 'select')
+          const inputs   = elements.filter(e => e.tag === 'input')
+          const buttons  = elements.filter(e => e.tag === 'button')
+          return {
+            url: window.location.href,
+            total: elements.length,
+            selects: selects.length,
+            inputs: inputs.length,
+            buttons: buttons.length,
+            labels: elements.map(e => e.label).filter(Boolean),
+            selectSummary: selects.map(e => ({
+              label: e.label,
+              bvid: e.bvid,
+              optionCount: e.options?.length,
+              firstOptions: e.options?.slice(0, 4).map(o => `${o.text}(${o.value})`).join(' / '),
+            })),
+            buttonTexts: buttons.map(e => e.text).filter(Boolean),
+          }
+        },
+      })
+
+      if (!analysis) throw new Error('解析結果が取得できませんでした')
+
+      // ポップアップに結果を表示
+      const lines = [
+        `✓ 解析完了: 計${analysis.total}要素`,
+        `  select: ${analysis.selects}個  input: ${analysis.inputs}個  button: ${analysis.buttons}個`,
+        `URL: ${analysis.url.split('/').slice(-2).join('/')}`,
+        '',
+        '▼ 検出したラベル:',
+        ...([...new Set(analysis.labels)].map(l => `  ・${l}`)),
+        '',
+        '▼ SELECTの内容:',
+        ...(analysis.selectSummary.map(s =>
+          `  [${s.label ?? 'label不明'}] ${s.optionCount}件: ${s.firstOptions ?? ''}...`
+        )),
+        '',
+        '▼ ボタン:',
+        ...(analysis.buttonTexts.map(t => `  ・${t}`)),
+        '',
+        '詳細はページのコンソール(F12)を確認してください。',
+      ]
+      analyzeResultEl.textContent = lines.join('\n')
+      analyzeResultEl.style.display = 'block'
+      analyzeResultEl.style.background = '#f0fdf4'
+      analyzeResultEl.style.borderColor = '#86efac'
+      analyzeResultEl.style.color = '#15803d'
+
+    } catch (e) {
+      analyzeResultEl.textContent = `エラー: ${e.message}\nレインズのページをリロードして再試行してください。`
+      analyzeResultEl.style.display = 'block'
+      analyzeResultEl.style.background = '#fef2f2'
+      analyzeResultEl.style.borderColor = '#fca5a5'
+      analyzeResultEl.style.color = '#dc2626'
+    } finally {
+      analyzeFormBtn.disabled = false
+      analyzeFormBtn.textContent = 'このページのフォームを解析する'
+    }
+  })
+
   // ── タスクUI（レインズ検索タブ） ────────────────────────────
   function updateTaskUI(task) {
     if (!task) {
@@ -387,10 +570,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       const headers = { 'Content-Type': 'application/json' }
       if (token) headers['x-extension-token'] = token
 
-      const res = await fetch(`${apiBase}/api/reins/import-page`, {
+      // 新・横断照合フロー: 取込 → 抽出 → reins_imported_properties に保存
+      const res = await fetch(`${apiBase}/api/reins/import`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ session_id: sessionId, text: pageText, page_url: pageUrl }),
+        body: JSON.stringify({ text: pageText, page_url: pageUrl }),
       })
 
       let data
@@ -402,26 +586,23 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
 
-      sessionId = data.session_id
-      await chrome.storage.local.set({ sessionId })
-      updateSessionUI(data.page_count, sessionId)
-
+      openAppBtn.disabled = false
       showResult(
-        `✓ ${data.page_count}ページ目を追加しました\n` +
-        (data.page_count >= 2 ? '次のページへ移動して同様に追加できます。' : 'さらに次のページも追加できます。'),
+        `✓ ${data.imported_count}件の物件を取り込みました（抽出 ${data.extracted_count}件）\n` +
+        `別のページも同様に取り込めます。物件一覧で顧客との照合を確認してください。`,
         'success'
       )
     } catch (e) {
       showResult(`エラー: ${e.message}`, 'error')
     } finally {
       addPageBtn.disabled = false
-      addPageBtn.textContent = 'このページを追加'
+      addPageBtn.textContent = 'このページを取り込む'
     }
   })
 
   // ── アプリで照合する ─────────────────────────────────────────
   openAppBtn.addEventListener('click', () => {
-    chrome.tabs.create({ url: `${apiBase}/reins-check` })
+    chrome.tabs.create({ url: `${apiBase}/properties` })
   })
 
   // ── セッションをクリア ────────────────────────────────────────

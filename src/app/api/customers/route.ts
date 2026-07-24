@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
     customer_no: rawCustomerNo, name, email, phone, rank, sales_memo, status,
     // condition fields
     transaction_type,
-    area, property_type,
+    area, preferred_station, property_type, floor_plan,
     budget_min, budget_max,
     rent_min, rent_max,
     area_sqm_min, area_sqm_max, walk_minutes_max, building_age_max, other_conditions,
@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
   await supabase.from('customer_conditions').insert({
     customer_id: customer.id,
     transaction_type: transaction_type ?? 'sale',
-    area, property_type,
+    area, preferred_station, property_type, floor_plan,
     budget_min, budget_max,
     rent_min, rent_max,
     area_sqm_min, area_sqm_max, walk_minutes_max, building_age_max, other_conditions,
@@ -101,8 +101,8 @@ export async function POST(req: NextRequest) {
     after_data: customer,
   })
 
-  // 検索URLを自動生成 (fire-and-forget)
-  if (area || property_type || budget_min || budget_max || rent_min || rent_max) {
+  // 検索URL自動生成はポータル停止に伴い無効化（コードは残置）
+  if (false && (area || property_type || budget_min || budget_max || rent_min || rent_max)) {
     const condForGen = {
       customer_id:      customer.id,
       transaction_type: transaction_type ?? 'sale',

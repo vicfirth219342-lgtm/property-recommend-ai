@@ -17,10 +17,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <span className="font-bold text-lg">物件提案システム</span>
           <a href="/dashboard" className="hover:text-slate-300 text-sm">ダッシュボード</a>
           <a href="/customers" className="hover:text-slate-300 text-sm">顧客管理</a>
-          <a href="/manual-crawl" className="hover:text-slate-300 text-sm">手動探索</a>
-          <a href="/reins-check" className="hover:text-slate-300 text-sm">レインズ掲載確認</a>
-          <a href="/reins-queue" className="hover:text-slate-300 text-sm">照合キュー</a>
-          <a href="/admin/portal-area-mappings" className="hover:text-slate-300 text-sm">エリア管理</a>
+          <a href="/properties" className="hover:text-slate-300 text-sm">物件一覧</a>
+          {/* ポータル関連（手動探索/レインズ掲載確認/照合キュー/エリア管理）はポータル停止に伴い非表示。ページは残置 */}
         </nav>
         <main className="min-h-screen bg-slate-50">{children}</main>
       </body>

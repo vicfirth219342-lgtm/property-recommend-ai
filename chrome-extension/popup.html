@@ -170,14 +170,14 @@
           <div class="session-hint" id="sessionHint">「このページを追加」でセッションを開始</div>
         </div>
 
-        <button id="addPageBtn" class="btn-primary">このページを追加</button>
+        <button id="addPageBtn" class="btn-primary">このページを取り込む</button>
         <button id="openAppBtn" class="btn-secondary" disabled>
-          アプリで照合する（→ 照合リストを開く）
+          物件一覧を開く（→ 顧客との照合を確認）
         </button>
         <button id="clearBtn" class="btn-danger" disabled>セッションをクリア</button>
 
         <div id="result"></div>
-        <div class="step-hint" id="stepHint">複数ページを追加してからアプリで照合してください</div>
+        <div class="step-hint" id="stepHint">レインズ検索結果ページで「このページを取り込む」を押してください</div>
       </div>
 
       <div id="noConfig" class="no-config" style="display:none">
@@ -203,7 +203,7 @@
       </button>
 
       <button id="fillFormBtn" class="btn-secondary" disabled>
-        フォームに条件を入力する（第1段階: コンソール表示）
+        フォームに条件を自動入力する
       </button>
 
       <div id="taskResult"></div>
@@ -212,6 +212,26 @@
         Webアプリで「レインズで物件探索」を押した後、<br>
         「最新の顧客条件を受け取る」をクリックしてください
       </div>
+
+      <hr style="margin:14px 0">
+
+      <!-- ── フォーム解析モード ──────────────────────────── -->
+      <div style="font-size:11px;font-weight:600;color:#475569;margin-bottom:6px;">
+        🔍 フォーム解析モード（第2段階準備）
+      </div>
+      <div style="font-size:10px;color:#94a3b8;line-height:1.5;margin-bottom:8px;">
+        レインズの検索条件入力画面を開いてからクリック。<br>
+        フォーム要素を自動取得してコンソールに出力します。
+      </div>
+      <button id="analyzeFormBtn" class="btn-secondary" style="font-size:11px;padding:7px;">
+        このページのフォームを解析する
+      </button>
+      <div id="analyzeResult" style="
+        margin-top:8px;padding:8px 10px;border-radius:6px;
+        font-size:10px;display:none;line-height:1.5;
+        background:#f0fdf4;border:1px solid #86efac;color:#15803d;
+        max-height:140px;overflow-y:auto;word-break:break-all;
+      "></div>
     </div>
   </div>
 

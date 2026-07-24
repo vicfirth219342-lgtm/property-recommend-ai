@@ -27,7 +27,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const {
     customer_no, name, email, phone, rank, sales_memo, status,
-    area, property_type,
+    area, preferred_station, property_type, floor_plan,
     transaction_type,
     budget_min, budget_max,
     rent_min, rent_max,
@@ -53,7 +53,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const condPayload = {
     customer_id: id,
     transaction_type: transaction_type ?? 'sale',
-    area, property_type,
+    area, preferred_station, property_type, floor_plan,
     budget_min, budget_max,
     rent_min, rent_max,
     area_sqm_min, area_sqm_max, walk_minutes_max, building_age_max, other_conditions,
@@ -81,7 +81,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     'area_sqm_min', 'area_sqm_max', 'walk_minutes_max', 'building_age_max',
   ]
   const hasCondition = conditionFields.some(f => f in body)
-  if (hasCondition) {
+  // 検索URL自動生成はポータル停止に伴い無効化（コードは残置）
+  if (false && hasCondition) {
     const condForGen = {
       customer_id:      id,
       transaction_type: transaction_type ?? 'sale',

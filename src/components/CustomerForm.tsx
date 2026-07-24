@@ -34,7 +34,9 @@ export default function CustomerForm({ initial, customerId }: Props) {
     sales_memo: initial?.sales_memo ?? '',
     transaction_type: (cond?.transaction_type ?? 'sale') as 'sale' | 'rent',
     area: cond?.area ?? '',
+    preferred_station: cond?.preferred_station ?? '',
     property_type: cond?.property_type ?? '',
+    floor_plan: cond?.floor_plan ?? '',
     // 売買
     budget_min: String(cond?.budget_min ?? ''),
     budget_max: String(cond?.budget_max ?? ''),
@@ -168,9 +170,9 @@ export default function CustomerForm({ initial, customerId }: Props) {
       const customer = await res.json()
       const targetId = customerId ?? customer.id
 
-      // 検索URLを保存（入力されているもののみ）
+      // 検索URLの保存はポータル停止に伴い無効化（コードは残置）
       for (const [site, url] of Object.entries(searchUrls)) {
-        if (url.trim()) {
+        if (false && url.trim()) {
           await fetch('/api/search-urls', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -309,6 +311,15 @@ export default function CustomerForm({ initial, customerId }: Props) {
             />
           </div>
           <div>
+            <label className={LABEL}>希望駅</label>
+            <input
+              className={FIELD}
+              value={form.preferred_station}
+              onChange={e => set('preferred_station', e.target.value)}
+              placeholder="例: 武蔵小杉・武蔵中原"
+            />
+          </div>
+          <div>
             <label className={LABEL}>物件種別</label>
             <select className={FIELD} value={form.property_type} onChange={e => set('property_type', e.target.value)}>
               <option value="">選択してください</option>
@@ -330,6 +341,15 @@ export default function CustomerForm({ initial, customerId }: Props) {
                 </>
               )}
             </select>
+          </div>
+          <div>
+            <label className={LABEL}>希望間取り</label>
+            <input
+              className={FIELD}
+              value={form.floor_plan}
+              onChange={e => set('floor_plan', e.target.value)}
+              placeholder="例: 3LDK"
+            />
           </div>
 
           {/* 売買: 予算 */}
@@ -440,7 +460,8 @@ export default function CustomerForm({ initial, customerId }: Props) {
         </div>
       </div>
 
-      {/* ── 検索URL ── */}
+      {/* ── 検索URL（ポータル停止に伴い非表示。コードは残置） ── */}
+      {false && (
       <div className={SECTION}>
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -472,12 +493,12 @@ export default function CustomerForm({ initial, customerId }: Props) {
                 <div key={site} className="bg-white rounded p-2 border border-blue-100">
                   <span className="text-xs font-bold text-blue-600 block mb-1">{siteLabels[site]}</span>
                   <a
-                    href={generatedUrls[site]}
+                    href={generatedUrls![site]}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-xs text-blue-700 hover:underline break-all"
                   >
-                    {generatedUrls[site]}
+                    {generatedUrls![site]}
                   </a>
                 </div>
               ))}
@@ -527,6 +548,8 @@ export default function CustomerForm({ initial, customerId }: Props) {
           ))}
         </div>
       </div>
+
+      )}
 
       {/* ── 送信ボタン ── */}
       <div className="flex gap-3 pb-6">
